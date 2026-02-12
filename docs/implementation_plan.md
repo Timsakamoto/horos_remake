@@ -1,0 +1,115 @@
+# Project Antigravity: Initialization Plan
+
+## Goal
+Establish the foundation for "Project Antigravity", a modern recreation of the Horos DICOM viewer using Electron, React, and TypeScript.
+**Philosophy**: Replicate Horos UI/UX/Features 100% but with modern internals.
+
+## Proposed Directory Structure (The "Reborn" Architecture)
+
+The architecture maps Horos's core Objective-C modules to modern React Feature modules.
+
+```text
+Project_Antigravity/
+├── .github/                # GitHub Actions & Templates
+├── .vscode/                # VS Code Settings
+├── assets/                 # Static resources (Icons, Splash screen)
+├── dist/                   # Production build output
+├── src/
+│   ├── main/               # [Electron Main] System interactions (Menu, Window, FS)
+│   │   ├── index.ts        # App Entry Point
+│   │   ├── menu.ts         # Native Menu (Horos-like menu structure)
+│   │   └── preload.ts      # Context Bridge
+│   ├── renderer/           # [React UI] The "Face" of Horos
+│   │   ├── index.html      # Entry HTML
+│   │   ├── src/
+│   │   │   ├── main.tsx    # React Entry
+│   │   │   ├── App.tsx     # Root Component
+│   │   │   ├── features/   # **Horos Core Modules Mapped Here**
+│   │   │   │   ├── Database/   # [RxDB] Patient Browser, Study List, Import Logic
+│   │   │   │   ├── Viewer/     # [Cornerstone3D] 2D/3D Viewers, ROI, MPR
+│   │   │   │   └── Plugins/    # Plugin System Interface
+│   │   │   ├── components/ # Shared UI Atoms (Buttons, Sliders matching Horos Dark UI)
+│   │   │   ├── styles/     # Tailwind setup for "Horos Dark" theme
+│   │   │   └── utils/      # Shared helpers (DICOM parsing wrappers)
+│   │   └── types/          # Global TypeScript definitions
+├── package.json            # defined below
+├── tsconfig.json           # TypeScript Configuration
+├── vite.config.ts          # Vite Configuration
+├── tailwind.config.js      # Tailwind Configuration
+└── README.md
+```
+
+## Proposed `package.json` (The Antigravity Stack)
+
+```json
+{
+  "name": "project-antigravity",
+  "productName": "Antigravity",
+  "version": "0.1.0",
+  "description": "A modern, cross-platform reconstruction of the Horos DICOM viewer.",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build && electron-builder",
+    "preview": "vite preview",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
+  },
+  "dependencies": {
+    "@cornerstonejs/core": "^1.68.0",
+    "@cornerstonejs/tools": "^1.68.0",
+    "@cornerstonejs/streaming-image-volume-loader": "^1.68.0",
+    "@cornerstonejs/nifti-volume-loader": "^1.68.0",
+    "@cornerstonejs/dicom-image-loader": "^1.68.0",
+    "dcmjs": "^0.29.13",
+    "dicom-parser": "^1.8.21",
+    "rxdb": "^15.18.0",
+    "rxjs": "^7.8.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.1",
+    "clsx": "^2.1.0",
+    "tailwind-merge": "^2.2.1",
+    "lucide-react": "^0.344.0",
+    "electron-store": "^8.1.0"
+  },
+  "devDependencies": {
+    "electron": "^29.1.0",
+    "electron-builder": "^24.13.3",
+    "vite": "^5.1.4",
+    "vite-plugin-electron": "^0.28.2",
+    "vite-plugin-electron-renderer": "^0.14.5",
+    "typescript": "^5.3.3",
+    "@types/react": "^18.2.56",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "tailwindcss": "^3.4.1",
+    "autoprefixer": "^10.4.17",
+    "postcss": "^8.4.35",
+    "eslint": "^8.56.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.5"
+  }
+}
+
+## Phase 3: UI Polish & Advanced Tools
+
+### Toolbar Overhaul
+- **Icons**: Use `lucide-react` for standard icons (Mouse Pointer, Zoom, Sun/Moon, Ruler, etc.).
+- **Organization**: Group tools logically (Navigation, Window/Level, Annotation).
+- **State**: Visually indicate the active tool.
+
+### Patient Browser Refinement
+- **UI Component**: Use a `<table>` HTML element with sticky headers.
+- **Columns**: Name, ID, Accession, Date, Modality, # Images.
+- **Sorting**: Click on header to sort (asc/desc).
+- **Search**: Filter patients by Name or ID using `db.patients.find({ selector: ... })` or client-side filtering if dataset is small.
+- **Selection**: Highlight selected row.
+
+## Verification Plan
+- **Cornerstone Tools**: Enable `LengthTool`, `RectangleROITool`, `EllipticalROITool`.
+- **Annotation State**: Persist annotations (in memory for now) and restore them when Series is reloaded.
+
+## Verification Plan
+- [ ] Directory structure exists
+- [ ] `package.json` contains specified dependencies
+- [ ] `npm install` runs successfully (User Action)
