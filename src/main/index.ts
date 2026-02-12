@@ -1,5 +1,6 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import path from 'node:path'
+import fs from 'node:fs/promises'
 
 // The built directory structure
 //
@@ -37,10 +38,31 @@ function createWindow() {
     if (VITE_DEV_SERVER_URL) {
         win.loadURL(VITE_DEV_SERVER_URL)
     } else {
-        // win.loadFile('dist/index.html')
-        win.loadFile(path.join(process.env.DIST, 'index.html'))
+        win.loadFile(path.join(process.env.DIST || '', 'index.html'))
     }
 }
+
+// IPC Handlers
+ipcMain.handle('dialog:openFile', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+        properties: ['openFile', 'multiSelections']
+    })
+    if (canceled) {
+        return []
+    } else {
+        return filePaths
+    }
+})
+
+ipcMain.handle('fs:readFile', async (_, filePath) => {
+    try {
+        const buffer = await fs.readFile(filePath)
+        return buffer
+    } catch (err) {
+        console.error(err)
+        return null
+    }
+})
 
 app.on('window-all-closed', () => {
     win = null
