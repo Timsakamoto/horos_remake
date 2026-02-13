@@ -2,30 +2,83 @@
 @tailwind components;
 @tailwind utilities;
 
-html,
-body,
-#root {
-    height: 100%;
-    margin: 0;
-    overflow: hidden;
-    /* App like feel */
+@layer base {
+    :root {
+        --phi: 1.61803398875;
+        --space-unit: 1rem;
+
+        /* Golden Ratio Based Spacing */
+        --space-xs: calc(var(--space-unit) / (var(--phi) * var(--phi) * var(--phi)));
+        /* ~0.23rem */
+        --space-sm: calc(var(--space-unit) / (var(--phi) * var(--phi)));
+        /* ~0.38rem */
+        --space-md: calc(var(--space-unit) / var(--phi));
+        /* ~0.61rem */
+        --space-lg: var(--space-unit);
+        /* 1rem */
+        --space-xl: calc(var(--space-unit) * var(--phi));
+        /* ~1.61rem */
+
+        /* Golden Ratio Based Border Radius */
+        --radius-sm: 0.382rem;
+        /* (1 - 1/phi) */
+        --radius-md: 0.618rem;
+        /* 1/phi */
+        --radius-lg: 1rem;
+    }
+
+    html,
+    body,
+    #root {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        @apply bg-horos-bg text-horos-text antialiased;
+    }
+
+    * {
+        @apply border-horos-border;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+        font-feature-settings: "ss01", "ss02", "cv01", "cv11";
+    }
 }
 
-/* Horos-like Scrollbars */
+@layer components {
+    .flat-panel {
+        @apply bg-white border border-gray-100 shadow-[0_2px_12px_rgba(0, 0, 0, 0.03)];
+        border-radius: var(--radius-md);
+    }
+
+    .flat-button {
+        @apply px-4 py-2 bg-white border border-gray-200 text-sm font-medium hover:bg-gray-50 transition-all active:scale-[0.98] active:bg-gray-100;
+        border-radius: var(--radius-sm);
+    }
+
+    .primary-button {
+        @apply px-4 py-2 bg-horos-accent text-white text-sm font-semibold hover:bg-blue-600 transition-all active:scale-[0.98] shadow-sm;
+        border-radius: var(--radius-sm);
+    }
+}
+
+/* Modern macOS-like Scrollbars (Light) */
 ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-    background: #2d2d2d;
+    background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #555;
-    border-radius: 4px;
+    background: #c1c1c1;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #777;
+    background: #a8a8a8;
+    border: 3px solid transparent;
+    background-clip: padding-box;
 }

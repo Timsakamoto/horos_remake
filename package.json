@@ -13,6 +13,7 @@
         "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
     },
     "dependencies": {
+        "@cornerstonejs/calculate-suv": "^1.1.0",
         "@cornerstonejs/core": "^1.68.0",
         "@cornerstonejs/dicom-image-loader": "^1.68.0",
         "@cornerstonejs/nifti-volume-loader": "^1.68.0",
@@ -22,6 +23,7 @@
         "dcmjs": "^0.29.13",
         "dexie": "^4.3.0",
         "dicom-parser": "^1.8.21",
+        "dicomweb-client": "^0.11.2",
         "electron-store": "^8.1.0",
         "lucide-react": "^0.344.0",
         "react": "^18.2.0",

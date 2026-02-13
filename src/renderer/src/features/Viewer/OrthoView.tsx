@@ -19,6 +19,7 @@ import {
 import { initCornerstone } from './init';
 import { useDatabase } from '../Database/DatabaseProvider';
 import { registerElectronImageLoader } from './electronLoader';
+import { PROJECTION_MODES, ProjectionMode } from './mprUtils';
 
 const { ViewportType } = Enums;
 const { MouseBindings } = csToolsEnums;
@@ -32,9 +33,11 @@ const ORTHO_TOOL_GROUP_ID = 'ortho-tool-group';
 
 interface Props {
     seriesUid: string;
+    projectionMode?: ProjectionMode;
+    slabThickness?: number;
 }
 
-export const OrthoView = ({ seriesUid }: Props) => {
+export const OrthoView = ({ seriesUid, projectionMode = 'NORMAL', slabThickness = 0 }: Props) => {
     const elementAxialRef = useRef<HTMLDivElement>(null);
     const elementSagittalRef = useRef<HTMLDivElement>(null);
     const elementCoronalRef = useRef<HTMLDivElement>(null);
@@ -183,6 +186,29 @@ export const OrthoView = ({ seriesUid }: Props) => {
             }
         };
     }, [db, seriesUid]);
+
+    // 3. Update Viewport Properties (MIP/MinIP/Slab)
+    useEffect(() => {
+        const updateViewports = async () => {
+            const renderingEngine = getRenderingEngine(ORTHO_RENDERING_ENGINE_ID);
+            if (!renderingEngine) return;
+
+            const viewportIds = [AXIAL_VIEWPORT_ID, SAGITTAL_VIEWPORT_ID, CORONAL_VIEWPORT_ID];
+            const blendMode = PROJECTION_MODES[projectionMode];
+
+            viewportIds.forEach(viewportId => {
+                const viewport = renderingEngine.getViewport(viewportId) as Types.IVolumeViewport;
+                if (viewport) {
+                    viewport.setProperties({ blendMode });
+                    viewport.setSlabThickness(slabThickness);
+                }
+            });
+
+            renderingEngine.render();
+        };
+
+        updateViewports();
+    }, [projectionMode, slabThickness]);
 
     return (
         <div className="w-full h-full relative bg-black flex flex-wrap">

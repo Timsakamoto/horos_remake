@@ -7,13 +7,14 @@ module.exports = {
     theme: {
         extend: {
             colors: {
-                'horos-bg': '#f5f5f7',       // Light gray (Mac standard)
-                'horos-panel': '#ffffff',    // White for panels
-                'horos-border': '#d1d1d6',   // Light border
+                'horos-bg': '#f5f5f7',       // Apple System Background
+                'horos-panel': '#ffffff',    // Pure White for Flat look
+                'horos-border': '#e5e5ea',   // Subtle light border
                 'horos-text': '#1c1c1e',     // Dark text
-                'horos-accent': '#007aff',   // iOS Blue
-                'horos-hover': '#f2f2f7',    // Light hover
-                'horos-selected': '#e5f1fb'  // Light blue selection
+                'horos-accent': '#007aff',   // macOS Blue
+                'horos-hover': '#f2f2f7',    // Light gray hover
+                'horos-selected': '#007aff', // Vibrant blue selection
+                'horos-toolbar': '#ffffff'   // Clean white toolbar
             }
         },
     },

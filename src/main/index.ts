@@ -64,6 +64,22 @@ ipcMain.handle('fs:readFile', async (_, filePath) => {
     }
 })
 
+ipcMain.handle('fs:writeFile', async (_, filePath, data) => {
+    try {
+        const dir = path.dirname(filePath);
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(filePath, Buffer.from(data))
+        return true
+    } catch (err) {
+        console.error(err)
+        return false
+    }
+})
+
+ipcMain.handle('app:getPath', async (_, name: any) => {
+    return app.getPath(name);
+})
+
 app.on('window-all-closed', () => {
     win = null
     if (process.platform !== 'darwin') {

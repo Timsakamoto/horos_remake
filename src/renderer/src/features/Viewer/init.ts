@@ -14,11 +14,32 @@ import dcmjs from 'dcmjs';
 export const initCornerstone = async () => {
     console.log('Cornerstone: Initializing...');
 
-    // 1. Init Core & Tools
-    await csRenderInit();
+    // 1. Init Core with GPU/Worker settings
+    // Cornerstone 1.x auto-detects GPU, but we can ensure it's prioritized
+    await csRenderInit({
+        gpu: {
+            preferredDeviceType: 'discrete' // Preferred for diagnostic workstations
+        }
+    });
+
     await csToolsInit();
 
-    // 2. Register Volume Loaders
+    // 2. Configure DICOM Image Loader WebWorkers (Phase 11)
+    const config = {
+        maxWebWorkers: Math.min(navigator.hardwareConcurrency || 4, 8),
+        startWebWorkersOnDemand: true,
+        webWorkerTaskPaths: [],
+        taskConfiguration: {
+            decodeTask: {
+                initializeCodecsOnIdle: true,
+                strict: false,
+            },
+        },
+    };
+
+    cornerstoneDICOMImageLoader.webWorkerManager.initialize(config);
+
+    // 3. Register Volume Loaders
     volumeLoader.registerUnknownVolumeLoader(
         cornerstoneStreamingImageVolumeLoader,
     );
@@ -26,12 +47,6 @@ export const initCornerstone = async () => {
         'cornerstoneStreamingImageVolume',
         cornerstoneStreamingImageVolumeLoader,
     );
-
-    // 3. Configure DICOM Image Loader (WADO-RS / Local)
-    // For Electron local files, we might need a custom loader or
-    // use cornerstoneDICOMImageLoader.wadouri with 'file://' protocol if supported,
-    // or register a custom loader.
-    // For now, let's just init the basics.
 
     console.log('Cornerstone: Initialized.');
 };
