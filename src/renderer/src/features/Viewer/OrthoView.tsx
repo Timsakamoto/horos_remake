@@ -42,7 +42,7 @@ export const OrthoView = ({ seriesUid, projectionMode = 'NORMAL', slabThickness 
     const elementSagittalRef = useRef<HTMLDivElement>(null);
     const elementCoronalRef = useRef<HTMLDivElement>(null);
 
-    const db = useDatabase();
+    const { db } = useDatabase();
     const [status, setStatus] = useState<string>('Initializing MPR...');
 
     // 1. Initialize Tools

@@ -45,7 +45,7 @@ const PRESETS = {
 
 export const VRView = ({ seriesUid }: Props) => {
     const elementRef = useRef<HTMLDivElement>(null);
-    const db = useDatabase();
+    const { db } = useDatabase();
     const [status, setStatus] = useState<string>('Initializing VR...');
     const [activePreset, setActivePreset] = useState<string>('CT-Bone');
 

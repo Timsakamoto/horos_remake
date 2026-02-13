@@ -39,7 +39,7 @@ const TOOL_GROUP_ID = 'main-tool-group';
 export const Viewport = ({ viewportId, renderingEngineId, seriesUid, activeTool = 'WindowLevel' }: Props) => {
     const elementRef = useRef<HTMLDivElement>(null);
     const runningRef = useRef(false);
-    const db = useDatabase();
+    const { db } = useDatabase();
     const [status, setStatus] = useState<string>('Initializing...');
 
     // 1. Initialize Tools

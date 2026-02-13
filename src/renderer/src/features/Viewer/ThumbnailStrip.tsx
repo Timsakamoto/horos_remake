@@ -16,7 +16,7 @@ interface Props {
 }
 
 export const ThumbnailStrip = ({ patientId, onSelect, selectedSeriesUid }: Props) => {
-    const db = useDatabase();
+    const { db } = useDatabase();
     const [seriesList, setSeriesList] = useState<SeriesSummary[]>([]);
 
     useEffect(() => {

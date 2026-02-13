@@ -74,7 +74,7 @@ export const PatientBrowser: React.FC<PatientBrowserProps> = ({ onSelect, select
                                     text-[13px] font-bold tracking-tight truncate
                                     ${selectedId === patient.id ? 'text-gray-900' : 'text-gray-700'}
                                 `}>
-                                    {patient.name}
+                                    {patient.patientName}
                                 </span>
                                 <div className="flex items-center gap-1.5">
                                     <span className="text-[10px] text-gray-400 font-medium">{patient.id}</span>

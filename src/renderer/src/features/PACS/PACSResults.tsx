@@ -6,7 +6,7 @@ import { importStudyFromPACS } from '../Database/importService';
 
 export const PACSResults = () => {
     const { results, isSearching, activeServer } = usePACS();
-    const db = useDatabase();
+    const { db } = useDatabase();
     const [downloadingStudy, setDownloadingStudy] = useState<string | null>(null);
     const [progress, setProgress] = useState<string>('');
 
