@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useDatabase } from '../Database/DatabaseContext';
+import { useDatabase } from '../Database/DatabaseProvider';
 
 interface SeriesSummary {
     seriesInstanceUID: string;

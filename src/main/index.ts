@@ -23,7 +23,7 @@ function createWindow() {
         height: 800,
         backgroundColor: '#1a1a1a', // Horos dark grey
         webPreferences: {
-            preload: path.join(__dirname, '../preload/index.js'),
+            preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
             contextIsolation: true,
         },

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Search, Plus, User, Upload, MoreHorizontal } from 'lucide-react';
-import { useDatabase } from './DatabaseContext';
+import { useDatabase } from './DatabaseProvider';
 
 interface PatientBrowserProps {
     onSelect: (patientId: string) => void;

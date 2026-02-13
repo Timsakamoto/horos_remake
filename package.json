@@ -3,7 +3,7 @@
     "productName": "Antigravity",
     "version": "0.1.0",
     "description": "A modern, cross-platform reconstruction of the Horos DICOM viewer.",
-    "main": "dist/main/index.js",
+    "main": "dist-electron/index.js",
     "author": "Antigravity Team",
     "license": "GPL-3.0",
     "scripts": {

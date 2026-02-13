@@ -3,11 +3,11 @@ import { Database, Layers, Search, Plus, MoreHorizontal, User, Download, RotateC
 import { PatientBrowser } from './features/Database/PatientBrowser';
 import { ThumbnailStrip } from './features/Viewer/ThumbnailStrip';
 import { Viewport } from './features/Viewer/Viewport';
-import { OrthoView } from './features/MPR/OrthoView';
-import { VRView } from './features/Volume/VRView';
+import { OrthoView } from './features/Viewer/OrthoView';
+import { VRView } from './features/Viewer/VRView';
 import { Toolbar, ToolMode, ViewMode, ProjectionMode } from './features/Viewer/Toolbar';
 import { PACSMain } from './features/PACS/PACSMain';
-import { DatabaseProvider } from './features/Database/DatabaseContext';
+import { DatabaseProvider } from './features/Database/DatabaseProvider';
 
 function App() {
     const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
