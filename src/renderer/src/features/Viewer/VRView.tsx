@@ -4,7 +4,6 @@ import {
     Enums,
     type Types,
     volumeLoader,
-    getRenderingEngine,
 } from '@cornerstonejs/core';
 import {
     addTool,
@@ -29,20 +28,6 @@ interface Props {
     seriesUid: string;
 }
 
-const PRESETS = {
-    'CT-Bone': {
-        name: 'Bone',
-        gradientOpacity: '4 0 1 255 1',
-        scalarOpacity: '8 -1000 0 -500 0 -200 0 200 0.1 1000 0.3 3000 0.5',
-        colorTransfer: '10 -1000 0 0 0 -500 255 210 180 -200 255 210 180 200 255 255 255 1000 255 255 255 3000 255 255 255',
-        // Note: Cornerstone3D uses distinct preset objects usually loaded from vtkjs examples
-        // For simplicity in this raw implementation, we might stick to default or simple manually defined ones
-        // or look up standard vtkJS presets if available in Cornerstone wrappers.
-        // Actually, Cornerstone3D has `CONSTANTS.VIEWPORT_PRESETS`? No.
-        // We will define a simple CT-Bone logic manually via actor props later.
-    }
-};
-
 export const VRView = ({ seriesUid }: Props) => {
     const elementRef = useRef<HTMLDivElement>(null);
     const { db } = useDatabase();
@@ -50,10 +35,10 @@ export const VRView = ({ seriesUid }: Props) => {
     const [activePreset, setActivePreset] = useState<string>('CT-Bone');
 
     useEffect(() => {
-        // Tools
-        addTool(TrackballRotateTool);
-        addTool(ZoomTool);
-        addTool(PanTool);
+        // Register Tools - wrap in try-catch since they may already be registered
+        [TrackballRotateTool, ZoomTool, PanTool].forEach(tool => {
+            try { addTool(tool); } catch (e) { /* already registered */ }
+        });
 
         let toolGroup = ToolGroupManager.getToolGroup(VR_TOOL_GROUP_ID);
         if (!toolGroup) {
@@ -61,9 +46,10 @@ export const VRView = ({ seriesUid }: Props) => {
         }
 
         if (toolGroup) {
-            toolGroup.addTool(TrackballRotateTool.toolName);
-            toolGroup.addTool(ZoomTool.toolName);
-            toolGroup.addTool(PanTool.toolName);
+            const toolNames = [TrackballRotateTool.toolName, ZoomTool.toolName, PanTool.toolName];
+            toolNames.forEach(name => {
+                if (!toolGroup!.hasTool(name)) toolGroup!.addTool(name);
+            });
 
             toolGroup.setToolActive(TrackballRotateTool.toolName, { bindings: [{ mouseButton: MouseBindings.Primary }] });
             toolGroup.setToolActive(PanTool.toolName, { bindings: [{ mouseButton: MouseBindings.Auxiliary }] });
@@ -79,7 +65,7 @@ export const VRView = ({ seriesUid }: Props) => {
         const loadVolume = async () => {
             setStatus('Loading Volume for VR...');
 
-            const images = await db.images.find({
+            const images = await (db as any).T_FilePath.find({
                 selector: { seriesInstanceUID: seriesUid },
                 sort: [{ instanceNumber: 'asc' }]
             }).exec();
@@ -89,7 +75,7 @@ export const VRView = ({ seriesUid }: Props) => {
                 return;
             }
 
-            const imageIds = images.map(img => `electronfile:${img.filePath}`);
+            const imageIds = images.map((img: any) => `electronfile:${img.filePath}`);
             const volumeId = `cornerstoneStreamingImageVolume:${seriesUid}`;
 
             await initCornerstone();
@@ -121,19 +107,11 @@ export const VRView = ({ seriesUid }: Props) => {
                 const viewport = renderingEngine.getViewport(VR_VIEWPORT_ID) as Types.IVolumeViewport;
 
                 // Set Volume
-                // For 3D, we need to set volume and then configure properties
                 await viewport.setVolumes([{ volumeId }]);
 
-                // Set Preset (Bone-like default)
-                // In Cornerstone3D, we set properties on the actor.
-                // const actor = viewport.getActor(volumeId);
-                // actor.property.set... 
-                // Alternatively, use viewport.setProperties({ preset: 'CT-Bone' }); if supported
-                // The most robust way is defining a preset object.
                 viewport.setProperties({
-                    preset: 'CT-Bone', // Helper alias in newer CS3D? Or we need full define.
+                    preset: 'CT-Bone',
                 });
-                // Fallback if alias doesn't work: relying on default or manual transfer function
 
                 viewport.render();
                 setStatus('');
@@ -171,7 +149,6 @@ export const VRView = ({ seriesUid }: Props) => {
                         <option value="CT-MIP">MIP</option>
                         <option value="CT-Soft">Soft Tissue</option>
                     </select>
-                    {/* Preset change logic not yet hooked up to Viewport update */}
                 </div>
             </div>
             <div ref={elementRef} className="w-full h-full" onContextMenu={e => e.preventDefault()} />

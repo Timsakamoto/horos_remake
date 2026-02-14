@@ -19,7 +19,7 @@ import {
 import { initCornerstone } from './init';
 import { useDatabase } from '../Database/DatabaseProvider';
 import { registerElectronImageLoader } from './electronLoader';
-import { PROJECTION_MODES, ProjectionMode } from './mprUtils';
+import { ProjectionMode } from './mprUtils';
 
 const { ViewportType } = Enums;
 const { MouseBindings } = csToolsEnums;
@@ -47,25 +47,26 @@ export const OrthoView = ({ seriesUid, projectionMode = 'NORMAL', slabThickness 
 
     // 1. Initialize Tools
     useEffect(() => {
-        // Register Tools if not already
-        addTool(StackScrollMouseWheelTool);
-        addTool(WindowLevelTool);
-        addTool(PanTool);
-        addTool(ZoomTool);
+        // Register Tools - wrap in try-catch since they may already be registered by init.ts
+        [StackScrollMouseWheelTool, WindowLevelTool, PanTool, ZoomTool].forEach(tool => {
+            try { addTool(tool); } catch (e) { /* already registered */ }
+        });
 
-        // Create ToolGroup for MPR
-        // Note: Destroy existing if switching back and forth? 
-        // ToolGroupManager.destroyToolGroup(ORTHO_TOOL_GROUP_ID); 
         let toolGroup = ToolGroupManager.getToolGroup(ORTHO_TOOL_GROUP_ID);
         if (!toolGroup) {
             toolGroup = ToolGroupManager.createToolGroup(ORTHO_TOOL_GROUP_ID);
         }
 
         if (toolGroup) {
-            toolGroup.addTool(StackScrollMouseWheelTool.toolName);
-            toolGroup.addTool(WindowLevelTool.toolName);
-            toolGroup.addTool(PanTool.toolName);
-            toolGroup.addTool(ZoomTool.toolName);
+            const toolNames = [
+                StackScrollMouseWheelTool.toolName,
+                WindowLevelTool.toolName,
+                PanTool.toolName,
+                ZoomTool.toolName
+            ];
+            toolNames.forEach(name => {
+                if (!toolGroup!.hasTool(name)) toolGroup!.addTool(name);
+            });
 
             toolGroup.setToolActive(StackScrollMouseWheelTool.toolName);
             toolGroup.setToolActive(WindowLevelTool.toolName, { bindings: [{ mouseButton: MouseBindings.Primary }] });
@@ -83,7 +84,7 @@ export const OrthoView = ({ seriesUid, projectionMode = 'NORMAL', slabThickness 
         const loadVolume = async () => {
             setStatus('Loading Series Metadata...');
 
-            const images = await db.images.find({
+            const images = await (db as any).T_FilePath.find({
                 selector: { seriesInstanceUID: seriesUid },
                 sort: [{ instanceNumber: 'asc' }]
             }).exec();
@@ -93,7 +94,7 @@ export const OrthoView = ({ seriesUid, projectionMode = 'NORMAL', slabThickness 
                 return;
             }
 
-            const imageIds = images.map(img => `electronfile:${img.filePath}`);
+            const imageIds = images.map((img: any) => `electronfile:${img.filePath}`);
             const volumeId = `cornerstoneStreamingImageVolume:${seriesUid}`; // Use streaming loader but we trick it with local files?
             // Actually, for local files, we might be able to use createAndCacheVolumeFromImages
             // IF the image loader supports metadata properly.
@@ -194,12 +195,13 @@ export const OrthoView = ({ seriesUid, projectionMode = 'NORMAL', slabThickness 
             if (!renderingEngine) return;
 
             const viewportIds = [AXIAL_VIEWPORT_ID, SAGITTAL_VIEWPORT_ID, CORONAL_VIEWPORT_ID];
-            const blendMode = PROJECTION_MODES[projectionMode];
 
             viewportIds.forEach(viewportId => {
                 const viewport = renderingEngine.getViewport(viewportId) as Types.IVolumeViewport;
                 if (viewport) {
-                    viewport.setProperties({ blendMode });
+                    viewport.setProperties({
+                        voiRange: { lower: 0, upper: 400 }
+                    });
                     viewport.setSlabThickness(slabThickness);
                 }
             });

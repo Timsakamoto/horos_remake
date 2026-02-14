@@ -1,68 +1,256 @@
-import { AntigravityDatabase } from '../Database/db';
+import { AntigravityDatabase } from './db';
 import { parseDicombuffer } from '../../utils/dicomParser';
 import { PACSClient } from '../PACS/pacsClient';
+import { updateRecordCounts } from './cleanupService';
 
-export const importFiles = async (db: AntigravityDatabase, filePaths: string[]) => {
-    // ... existing importFiles logic (skipped for brevity)
-    console.log(`ImportService: Processing ${filePaths.length} files...`);
+export const importFiles = async (
+    db: AntigravityDatabase,
+    filePaths: string[],
+    copyToDatabase: boolean = false,
+    onProgress?: (progress: number, message: string) => void,
+    customManagedDir?: string | null
+) => {
+    console.log(`ImportService: Processing ${filePaths.length} entries (copy=${copyToDatabase})...`);
+    onProgress?.(0, 'Initializing import...');
 
-    for (const filePath of filePaths) {
+    const allFilePaths: string[] = [];
+    let managedDir: string | null = customManagedDir || null;
+
+    // Batched data collection
+    const patientsMap = new Map<string, any>();
+    const studiesMap = new Map<string, any>();
+    const seriesMap = new Map<string, any>();
+    const images: any[] = [];
+
+    if (copyToDatabase && !managedDir) {
+        // @ts-ignore
+        const userData = await window.electron.getPath('userData');
+        // @ts-ignore
+        managedDir = await window.electron.join(userData, 'HorosData', 'DICOM');
+    }
+
+    if (managedDir) {
+        console.log(`ImportService: Using managedDir: ${managedDir}`);
+        // @ts-ignore
+        await window.electron.ensureDir(managedDir);
+    }
+
+    // 1. Resolve all directories into file paths
+    onProgress?.(5, 'Scanning directories...');
+    for (let i = 0; i < filePaths.length; i++) {
+        const path = filePaths[i];
         try {
             // @ts-ignore
-            const buffer = await window.electron.readFile(filePath);
-            if (!buffer) continue;
-            const meta = parseDicombuffer(buffer);
-            if (!meta) continue;
-
-            await importMetadata(db, meta, filePath);
-        } catch (error) {
-            console.error(`Error importing ${filePath}:`, error);
+            const files = await window.electron.readdirRecursive(path);
+            if (files && files.length > 0) {
+                allFilePaths.push(...files);
+            } else {
+                allFilePaths.push(path);
+            }
+        } catch (e) {
+            allFilePaths.push(path);
         }
     }
+
+    console.log(`ImportService: Normalized to ${allFilePaths.length} files.`);
+    const totalFiles = allFilePaths.length;
+    let importedCount = 0;
+    let skipped = 0;
+
+    for (let i = 0; i < totalFiles; i++) {
+        const filePath = allFilePaths[i];
+        const progress = 10 + Math.round((i / totalFiles) * 80);
+        const fileName = filePath.split(/[/\\]/).pop();
+        onProgress?.(progress, `Processing ${fileName}... (${importedCount} ready)`);
+
+        console.log(`ImportService: Starting processing for file: ${filePath}`);
+
+        try {
+            // Read first to get metadata for path generation
+            // @ts-ignore
+            const buffer = await window.electron.readFile(filePath);
+            if (!buffer) {
+                skipped++;
+                console.warn(`ImportService: Skipped empty or unreadable file: ${filePath}`);
+                continue;
+            }
+
+            const meta = parseDicombuffer(buffer);
+            if (!meta) {
+                skipped++;
+                console.warn(`ImportService: Skipped non-DICOM file or failed to parse: ${filePath}`);
+                continue;
+            }
+
+            let finalPath = filePath;
+
+            if (copyToDatabase && managedDir) {
+                const rawPatientID = String(meta.patientID || 'UNKNOWN');
+                const rawPatientName = String(meta.patientName || 'Unknown');
+                const rawBirthDate = String(meta.patientBirthDate || '');
+                const rawSex = String(meta.patientSex || '');
+                const patientGlobalId = `${rawPatientID}_${rawPatientName}_${rawBirthDate}_${rawSex}`
+                    .replace(/[^a-zA-Z0-9]/g, '_');
+
+                const safeStudy = String(meta.studyInstanceUID).replace(/[^a-zA-Z0-9.-]/g, '_');
+                const safeSeries = String(meta.seriesInstanceUID).replace(/[^a-zA-Z0-9.-]/g, '_');
+                const safeSOP = String(meta.sopInstanceUID).replace(/[^a-zA-Z0-9.-]/g, '_');
+
+                // @ts-ignore
+                const patientDir = await window.electron.join(managedDir, patientGlobalId);
+                // @ts-ignore
+                const studyDir = await window.electron.join(patientDir, safeStudy);
+                // @ts-ignore
+                const seriesDir = await window.electron.join(studyDir, safeSeries);
+                // @ts-ignore
+                await window.electron.ensureDir(seriesDir);
+                // @ts-ignore
+                const dest = await window.electron.join(seriesDir, `${safeSOP}.dcm`);
+
+                // @ts-ignore
+                const success = await window.electron.copyFile(filePath, dest);
+                if (success) finalPath = dest;
+            }
+
+            // Collect Metadata in Memory
+            const { patient, study, series, image } = prepareMetadata(meta, finalPath, Number(buffer.byteLength) || 0, managedDir);
+
+            patientsMap.set(patient.id, patient);
+            studiesMap.set(study.studyInstanceUID, study);
+            seriesMap.set(series.seriesInstanceUID, series);
+            images.push(image);
+
+            importedCount++;
+        } catch (error) {
+            console.error(`ImportService: Error processing ${filePath}:`, error);
+            skipped++;
+        }
+    }
+
+    // 2. Final Batch Commit
+    if (importedCount > 0) {
+        onProgress?.(92, `Committing ${importedCount} images to database...`);
+        console.log(`ImportService: Committing batches (P:${patientsMap.size}, St:${studiesMap.size}, Se:${seriesMap.size}, Im:${images.length})`);
+
+        try {
+            await db.T_Patient.bulkUpsert(Array.from(patientsMap.values()));
+            await db.T_Study.bulkUpsert(Array.from(studiesMap.values()));
+            await db.T_Subseries.bulkUpsert(Array.from(seriesMap.values()));
+            await db.T_FilePath.bulkUpsert(images);
+        } catch (err) {
+            console.error('ImportService: Bulk Commit Failed:', err);
+            throw err;
+        }
+    }
+
+    // Update record counts after import
+    onProgress?.(96, 'Updating database statistics...');
+    try {
+        await updateRecordCounts(db);
+    } catch (e) {
+        console.error('ImportService: Failed to update record counts:', e);
+    }
+
+    onProgress?.(100, `Import complete: ${importedCount} imported, ${skipped} skipped`);
+    console.log(`ImportService: Complete. ${importedCount} imported, ${skipped} skipped.`);
 };
 
-const importMetadata = async (db: AntigravityDatabase, meta: any, filePath: string) => {
-    // 1. Insert/Update Patient
-    await db.patients.upsert({
-        id: meta.patientID,
-        patientName: meta.patientName,
-        patientID: meta.patientID,
-        patientBirthDate: meta.patientBirthDate,
-        patientSex: meta.patientSex
-    });
+const prepareMetadata = (
+    meta: any,
+    filePath: string,
+    fileSize: number,
+    managedDir?: string | null
+) => {
+    // 1. Generate a robust composite patient key
+    const rawPatientID = String(meta.patientID || 'UNKNOWN');
+    const rawPatientName = String(meta.patientName || 'Unknown');
+    const rawBirthDate = String(meta.patientBirthDate || '');
+    const rawSex = String(meta.patientSex || '');
+    const patientGlobalId = `${rawPatientID}_${rawPatientName}_${rawBirthDate}_${rawSex}`
+        .replace(/[^a-zA-Z0-9]/g, '_');
 
-    // 2. Insert/Update Study
-    await db.studies.upsert({
-        studyInstanceUID: meta.studyInstanceUID,
-        studyDate: meta.studyDate,
-        studyTime: meta.studyTime,
-        accessionNumber: meta.accessionNumber,
-        studyDescription: meta.studyDescription,
-        modalitiesInStudy: meta.modalitiesInStudy,
-        patientId: meta.patientID
-    });
+    // Store relative path if it's within the managed directory
+    let storedPath = filePath;
+    if (managedDir && filePath.startsWith(managedDir)) {
+        storedPath = filePath.slice(managedDir.length).replace(/^[/\\]+/, '');
+    }
 
-    // 3. Insert/Update Series
-    await db.series.upsert({
-        seriesInstanceUID: meta.seriesInstanceUID,
-        modality: meta.modality,
-        seriesDate: meta.seriesDate,
-        seriesDescription: meta.seriesDescription,
-        seriesNumber: meta.seriesNumber,
-        studyInstanceUID: meta.studyInstanceUID
-    });
+    const patient = {
+        id: patientGlobalId,
+        patientName: rawPatientName,
+        patientID: rawPatientID,
+        patientBirthDate: rawBirthDate,
+        patientSex: rawSex,
+        patientNameNormalized: rawPatientName.toLowerCase()
+    };
 
-    // 4. Insert Image
-    await db.images.upsert({
-        sopInstanceUID: meta.sopInstanceUID,
-        instanceNumber: meta.instanceNumber,
-        sopClassUID: meta.sopClassUID,
-        filePath: filePath,
-        seriesInstanceUID: meta.seriesInstanceUID
-    });
+    const study = {
+        studyInstanceUID: String(meta.studyInstanceUID),
+        studyDate: String(meta.studyDate || ''),
+        studyTime: String(meta.studyTime || ''),
+        accessionNumber: String(meta.accessionNumber || ''),
+        studyDescription: String(meta.studyDescription || ''),
+        studyID: String(meta.studyID || ''),
+        modalitiesInStudy: Array.isArray(meta.modalitiesInStudy) ? meta.modalitiesInStudy.map(String) : [String(meta.modality || 'OT')],
+        numberOfStudyRelatedSeries: 0,
+        numberOfStudyRelatedInstances: 0,
+        patientAge: String(meta.patientAge || ''),
+        institutionName: String(meta.institutionName || ''),
+        referringPhysicianName: String(meta.referringPhysicianName || ''),
+        ImportDateTime: new Date().toISOString(),
+        patientId: patientGlobalId,
+        studyDescriptionNormalized: String(meta.studyDescription || '').toLowerCase()
+    };
+
+    const series = {
+        seriesInstanceUID: String(meta.seriesInstanceUID),
+        modality: String(meta.modality || ''),
+        seriesDate: String(meta.seriesDate || ''),
+        seriesDescription: String(meta.seriesDescription || ''),
+        seriesNumber: Number(meta.seriesNumber) || 0,
+        numberOfSeriesRelatedInstances: 0,
+        bodyPartExamined: String(meta.bodyPartExamined || ''),
+        protocolName: String(meta.protocolName || ''),
+        studyInstanceUID: String(meta.studyInstanceUID)
+    };
+
+    const image = {
+        sopInstanceUID: String(meta.sopInstanceUID),
+        instanceNumber: Number(meta.instanceNumber) || 0,
+        numberOfFrames: Number(meta.numberOfFrames) || 1,
+        sopClassUID: String(meta.sopClassUID || ''),
+        filePath: storedPath,
+        fileSize: fileSize,
+        transferSyntaxUID: String(meta.transferSyntaxUID || ''),
+        seriesInstanceUID: String(meta.seriesInstanceUID),
+        windowCenter: Number(meta.windowCenter) || 40,
+        windowWidth: Number(meta.windowWidth) || 400
+    };
+
+    return { patient, study, series, image };
 };
 
-export const importStudyFromPACS = async (db: AntigravityDatabase, serverUrl: string, studyInstanceUID: string, onProgress?: (msg: string) => void) => {
+// Legacy single-file import (unused internally now but kept for minor updates if needed)
+export const importMetadata = async (
+    db: AntigravityDatabase,
+    meta: any,
+    filePath: string,
+    fileSize: number,
+    managedDir?: string | null
+) => {
+    const { patient, study, series, image } = prepareMetadata(meta, filePath, fileSize, managedDir);
+    await db.T_Patient.upsert(patient);
+    await db.T_Study.upsert(study);
+    await db.T_Subseries.upsert(series);
+    await db.T_FilePath.upsert(image);
+};
+
+export const importStudyFromPACS = async (
+    db: AntigravityDatabase,
+    serverUrl: string,
+    studyInstanceUID: string,
+    onProgress?: (msg: string) => void
+) => {
     console.log(`ImportService: Downloading study ${studyInstanceUID} from PACS...`);
     const client = new PACSClient(serverUrl);
 
@@ -99,10 +287,14 @@ export const importStudyFromPACS = async (db: AntigravityDatabase, serverUrl: st
                 // Parse and Import to RxDB
                 const meta = parseDicombuffer(buffer);
                 if (meta) {
-                    await importMetadata(db, meta, filePath);
+                    await importMetadata(db, meta, filePath, buffer.byteLength || 0);
                 }
             }
         }
+
+        // Update counts after PACS import
+        await updateRecordCounts(db);
+
         console.log('ImportService: PACS Download complete.');
     } catch (error) {
         console.error('ImportService: PACS Download Error:', error);

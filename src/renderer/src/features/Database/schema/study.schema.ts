@@ -1,7 +1,26 @@
 import { RxJsonSchema } from 'rxdb';
 
-export const StudySchema: RxJsonSchema<any> = {
-    version: 0,
+export interface StudyDocType {
+    studyInstanceUID: string;
+    studyDate: string;
+    studyTime: string;
+    accessionNumber: string;
+    studyDescription: string;
+    studyID: string;
+    modalitiesInStudy: string[];
+    numberOfStudyRelatedSeries: number;
+    numberOfStudyRelatedInstances: number;
+    patientAge: string;
+    institutionName: string;
+    referringPhysicianName: string;
+    ImportDateTime: string;
+    patientId: string;
+    // Searchable normalized field
+    studyDescriptionNormalized: string;
+}
+
+export const StudySchema: RxJsonSchema<StudyDocType> = {
+    version: 1,
     primaryKey: 'studyInstanceUID',
     type: 'object',
     properties: {
@@ -21,17 +40,42 @@ export const StudySchema: RxJsonSchema<any> = {
         studyDescription: {
             type: 'string'
         },
+        studyID: {
+            type: 'string'
+        },
         modalitiesInStudy: {
             type: 'array',
             items: {
                 type: 'string'
             }
         },
+        numberOfStudyRelatedSeries: {
+            type: 'number'
+        },
+        numberOfStudyRelatedInstances: {
+            type: 'number'
+        },
+        patientAge: {
+            type: 'string'
+        },
+        institutionName: {
+            type: 'string'
+        },
+        referringPhysicianName: {
+            type: 'string'
+        },
+        ImportDateTime: {
+            type: 'string',
+            format: 'date-time'
+        },
         patientId: {
-            type: 'string', // Foreign Key to Patient
-            ref: 'patient'
+            type: 'string',
+            ref: 'T_Patient'
+        },
+        studyDescriptionNormalized: {
+            type: 'string'
         }
     },
     required: ['studyInstanceUID', 'patientId'],
-    indexes: ['patientId']
+    indexes: ['patientId', 'studyDate', 'ImportDateTime', 'studyDescriptionNormalized']
 };

@@ -1,143 +1,270 @@
 import { useState } from 'react';
-import { Database, Layers, Search, Plus, MoreHorizontal, User, Download, RotateCcw } from 'lucide-react';
-import { PatientBrowser } from './features/Database/PatientBrowser';
+import { Database, Layers, Activity } from 'lucide-react';
 import { ThumbnailStrip } from './features/Viewer/ThumbnailStrip';
 import { Viewport } from './features/Viewer/Viewport';
 import { OrthoView } from './features/Viewer/OrthoView';
 import { VRView } from './features/Viewer/VRView';
-import { Toolbar, ToolMode, ViewMode, ProjectionMode } from './features/Viewer/Toolbar';
+import { Toolbar, ToolMode, ViewMode, ProjectionMode, ToolbarMode } from './features/Viewer/Toolbar';
 import { PACSMain } from './features/PACS/PACSMain';
-import { DatabaseProvider } from './features/Database/DatabaseProvider';
+import { DatabaseProvider, useDatabase } from './features/Database/DatabaseProvider';
+import { DatabaseTable } from './features/Database/DatabaseTable';
+import { ImagePreview } from './features/Viewer/ImagePreview';
+import { initCornerstone } from './features/Viewer/init';
+import { useEffect } from 'react';
 
-function App() {
+import { SettingsProvider, useSettings } from './features/Settings/SettingsContext';
+import { SettingsDialog } from './features/Settings/SettingsDialog';
+
+const AppContent = () => {
+    const { patients, importPaths } = useDatabase();
+    const { setShowSettings, viewMode } = useSettings();
+
+    const [appMode, setAppMode] = useState<ToolbarMode>('DATABASE');
+    const [activeView, setActiveView] = useState<ViewMode>('Database');
     const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
+    const [selectedStudyUid, setSelectedStudyUid] = useState<string | null>(null);
     const [selectedSeriesUid, setSelectedSeriesUid] = useState<string | null>(null);
-    const [activeView, setActiveView] = useState<ViewMode>('2D');
     const [activeTool, setActiveTool] = useState<ToolMode>('WindowLevel');
     const [projectionMode, setProjectionMode] = useState<ProjectionMode>('NORMAL');
-    const [slabThickness, setSlabThickness] = useState<number>(0);
+    const [slabThickness, setSlabThickness] = useState(1);
+    const [isCinePlaying, setIsCinePlaying] = useState(false);
+    const [activeCLUT, setActiveCLUT] = useState<string>('grayscale');
+    const [isSynced, setIsSynced] = useState(false);
 
-    const handlePatientSelect = (pid: string) => {
-        setSelectedPatientId(pid);
-        setSelectedSeriesUid(null); // Reset series when patient changes
+    useEffect(() => {
+        initCornerstone();
+    }, []);
+
+    const onOpenViewer = () => {
+        if (selectedSeriesUid) {
+            setAppMode('VIEWER');
+            setActiveView('2D');
+        }
+    };
+
+    const onDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+    };
+
+    const onDrop = async (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const files = Array.from(e.dataTransfer.files);
+        const paths = files.map(f => (f as any).path).filter(Boolean);
+
+        if (paths.length > 0) {
+            await importPaths(paths);
+        }
     };
 
     return (
-        <DatabaseProvider>
-            <div className="flex flex-col h-screen bg-horos-bg overflow-hidden text-horos-text antialiased font-sans">
-                {/* Custom Title Bar Area (Electron Draggable) - LiftKit Optical Balance */}
-                <div className="h-9 bg-white flex items-center px-5 border-b border-gray-100 flex-none select-none z-50" style={{ WebkitAppRegion: 'drag' } as any}>
-                    <div className="flex gap-2.5 mr-auto">
-                        <div className="w-3 h-3 rounded-full bg-[#ff5f57] border border-black/5 hover:brightness-90 transition-all cursor-default" />
-                        <div className="w-3 h-3 rounded-full bg-[#ffbd2e] border border-black/5 hover:brightness-90 transition-all cursor-default" />
-                        <div className="w-3 h-3 rounded-full bg-[#28c840] border border-black/5 hover:brightness-90 transition-all cursor-default" />
-                    </div>
-                    <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-[2px] bg-horos-accent rotate-45" />
-                        <span className="text-[10px] font-black text-gray-400 tracking-[0.2em] uppercase">Horos Reborn</span>
-                    </div>
-                    <div className="ml-auto flex items-center gap-4">
-                        <span className="text-[9px] font-bold text-gray-300 tracking-tighter uppercase">v2.0.0-alpha.antigravity</span>
-                    </div>
-                </div>
+        <div
+            className="flex flex-col h-screen bg-horos-bg overflow-hidden text-horos-text antialiased font-sans"
+            onDrop={onDrop}
+            onDragOver={onDragOver}
+        >
+            <Toolbar
+                mode={appMode}
+                activeView={activeView}
+                onViewChange={setActiveView}
+                activeTool={activeTool}
+                onToolChange={setActiveTool}
+                projectionMode={projectionMode}
+                onProjectionModeChange={setProjectionMode}
+                slabThickness={slabThickness}
+                onSlabThicknessChange={setSlabThickness}
+                isCinePlaying={isCinePlaying}
+                onCineToggle={() => setIsCinePlaying(!isCinePlaying)}
+                activeCLUT={activeCLUT}
+                onCLUTChange={setActiveCLUT}
+                isSynced={isSynced}
+                onSyncToggle={() => setIsSynced(!isSynced)}
+                onOpenSettings={() => setShowSettings(true)}
+            />
 
-                {/* Toolbar */}
-                <Toolbar
-                    activeView={activeView}
-                    onViewChange={setActiveView}
-                    activeTool={activeTool}
-                    onToolChange={setActiveTool}
-                    projectionMode={projectionMode}
-                    onProjectionModeChange={setProjectionMode}
-                    slabThickness={slabThickness}
-                    onSlabThicknessChange={setSlabThickness}
-                />
+            <div className="flex flex-1 overflow-hidden relative">
+                {appMode === 'DATABASE' ? (
+                    <div className="flex flex-1 flex-col overflow-hidden">
+                        <div className="flex flex-1 overflow-hidden relative">
+                            {/* Sidebar (Horos Style) */}
+                            <div className="w-56 bg-gradient-to-b from-[#f5f5f7] to-[#e8e8ea] border-r border-[#d1d1d6] flex flex-col z-30 select-none shadow-[inset_-1px_0_0_rgba(0,0,0,0.05)]">
+                                <div className="flex-1 overflow-y-auto py-4">
+                                    {/* Local Section */}
+                                    <div className="px-4 mb-4">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Local</span>
+                                        </div>
+                                        <div className="space-y-0.5">
+                                            <div
+                                                onClick={() => setActiveView('Database')}
+                                                className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg font-bold text-xs cursor-pointer shadow-sm border transition-all ${activeView === 'Database'
+                                                    ? 'bg-horos-accent/15 text-horos-accent border-horos-accent/20'
+                                                    : 'border-transparent text-gray-600 hover:bg-black/5'
+                                                    }`}
+                                            >
+                                                <Database size={14} />
+                                                Documents DB
+                                                {viewMode === 'study' && <span className="ml-auto text-[9px] bg-white/50 px-1 rounded border border-horos-accent/10">S</span>}
+                                            </div>
+                                            <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-gray-500 hover:bg-black/5 font-medium text-xs cursor-pointer transition-colors">
+                                                <Layers size={14} />
+                                                Albums
+                                            </div>
+                                        </div>
+                                    </div>
 
-                {/* Work Area */}
-                <div className="flex flex-1 overflow-hidden relative">
-                    {/* Sidebar (Database/Plugins) - macOS Source List style */}
-                    {activeView !== 'PACS' && (
-                        <div className="w-72 bg-white border-r border-gray-100 flex flex-col z-30 shadow-[1px_0_10px_rgba(0,0,0,0.01)]">
-                            <PatientBrowser onSelect={handlePatientSelect} />
+                                    {/* Cloud Section */}
+                                    <div className="px-4 mb-4">
+                                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Services</span>
+                                        <div className="space-y-0.5 opacity-60">
+                                            <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-gray-500 hover:bg-gray-200/50 font-medium text-xs cursor-pointer">
+                                                <div className="w-3.5 h-3.5 rounded-full bg-blue-400/20 flex items-center justify-center">
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                                                </div>
+                                                Horos Cloud
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Locations Section */}
+                                    <div className="px-4">
+                                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Locations</span>
+                                        <div className="space-y-0.5">
+                                            <div
+                                                onClick={() => setActiveView('PACS')}
+                                                className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg font-medium text-xs cursor-pointer transition-colors ${activeView === 'PACS' ? 'bg-black/5 text-gray-900' : 'text-gray-500 hover:bg-black/5'}`}
+                                            >
+                                                <Activity size={14} />
+                                                PACS Query
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Database Main Content Area */}
+                            <div className="flex-1 flex flex-col bg-[#fcfcfc] overflow-hidden">
+                                {activeView === 'PACS' ? (
+                                    <PACSMain />
+                                ) : (
+                                    <div className="flex-1 flex flex-col overflow-hidden">
+                                        {/* Central Database Table */}
+                                        <div className="flex-1 flex flex-col overflow-hidden pt-4">
+                                            <DatabaseTable
+                                                onPatientSelect={setSelectedPatientId}
+                                                onStudySelect={setSelectedStudyUid}
+                                                onSeriesSelect={setSelectedSeriesUid}
+                                                selectedPatientId={selectedPatientId}
+                                                selectedStudyUid={selectedStudyUid}
+                                                selectedSeriesUid={selectedSeriesUid}
+                                            />
+                                        </div>
+
+                                        {/* Bottom Split Area (Thumbnails | Preview) */}
+                                        <div className="flex-1 flex gap-4 px-4 pb-4 overflow-hidden border-t border-[#e0e0e0] pt-4 bg-[#f2f2f7]">
+                                            <div className="flex-1 flex flex-col bg-white rounded-lg border border-[#d1d1d6] overflow-hidden shadow-sm">
+                                                <div className="px-3 py-2 border-b border-[#f0f0f0] flex items-center justify-between bg-gradient-to-b from-white to-[#f9f9f9]">
+                                                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Series Selection</span>
+                                                    <button onClick={onOpenViewer} className="text-[9px] font-black text-horos-accent hover:underline uppercase tracking-tight">Open in Viewer</button>
+                                                </div>
+                                                <div className="flex-1 overflow-hidden">
+                                                    {selectedPatientId ? (
+                                                        <ThumbnailStrip
+                                                            patientId={selectedPatientId}
+                                                            studyUid={selectedStudyUid}
+                                                            selectedSeriesUid={selectedSeriesUid}
+                                                            onSelect={setSelectedSeriesUid}
+                                                        />
+                                                    ) : (
+                                                        <div className="h-full flex items-center justify-center text-gray-300 uppercase text-[9px] font-black tracking-[0.2em]">No Selection</div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <ImagePreview seriesUid={selectedSeriesUid} />
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                         </div>
-                    )}
 
-                    {/* Viewer Area */}
-                    <div className="flex-1 bg-black flex relative overflow-hidden">
-
-                        {/* Thumbnail Strip - Perfectionist Dark Mode */}
-                        {activeView !== 'PACS' && selectedPatientId && (
-                            <div className="w-60 bg-[#0a0a0b] border-r border-white/5 flex flex-col z-20 shadow-2xl">
+                        {/* Status Bar (Horos Style) */}
+                        <div className="h-6 bg-[#f0f0f0] border-t border-[#d1d1d6] flex items-center px-4 justify-between select-none">
+                            <div className="flex items-center gap-4 text-[10px] font-bold text-gray-500">
+                                <span className="flex items-center gap-1.5">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.5)]" />
+                                    Online
+                                </span>
+                                <div className="h-3 w-[1px] bg-gray-300" />
+                                <span>{patients.length} {viewMode === 'patient' ? 'Patients' : 'Studies'} in database</span>
+                                <span>|</span>
+                                <span>DICOM Monitor: Active</span>
+                            </div>
+                            <div className="flex items-center gap-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                                <span>Documents DB - v2.0</span>
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    /* Viewer Mode Content */
+                    <div className="flex-1 flex overflow-hidden">
+                        {/* Left Thumbnails Sidebar (Horos Style) */}
+                        <div className="w-48 bg-[#0a0a0b] border-r border-white/10 flex flex-col overflow-hidden">
+                            {selectedPatientId && (
                                 <ThumbnailStrip
                                     patientId={selectedPatientId}
-                                    selectedSeriesUid={selectedSeriesUid || ''}
+                                    studyUid={selectedStudyUid}
+                                    selectedSeriesUid={selectedSeriesUid}
                                     onSelect={setSelectedSeriesUid}
                                 />
-                            </div>
-                        )}
+                            )}
+                        </div>
 
-                        {/* Main Viewport */}
-                        <div className="flex-1 relative bg-black shadow-inner">
-                            {activeView === 'PACS' ? (
-                                <PACSMain />
-                            ) : selectedSeriesUid ? (
-                                activeView === '2D' ? (
-                                    <Viewport
-                                        viewportId="main-viewport"
-                                        renderingEngineId="main-engine"
-                                        seriesUid={selectedSeriesUid}
-                                        activeTool={activeTool}
-                                    />
-                                ) : activeView === 'MPR' ? (
-                                    <OrthoView
-                                        seriesUid={selectedSeriesUid}
-                                        projectionMode={projectionMode}
-                                        slabThickness={slabThickness}
-                                    />
-                                ) : (
-                                    <VRView seriesUid={selectedSeriesUid} />
-                                )
+                        {/* Main Viewing Area */}
+                        <div className="flex-1 bg-black flex flex-col relative">
+                            {selectedSeriesUid ? (
+                                <div className="flex-1">
+                                    {activeView === '2D' ? (
+                                        <Viewport
+                                            viewportId="main-viewport"
+                                            renderingEngineId="main-engine"
+                                            seriesUid={selectedSeriesUid}
+                                            activeTool={activeTool}
+                                            activeCLUT={activeCLUT}
+                                            isSynced={isSynced}
+                                        />
+                                    ) : activeView === 'MPR' ? (
+                                        <OrthoView
+                                            seriesUid={selectedSeriesUid}
+                                            projectionMode={projectionMode}
+                                            slabThickness={slabThickness}
+                                        />
+                                    ) : (
+                                        <VRView seriesUid={selectedSeriesUid} />
+                                    )}
+                                </div>
                             ) : (
-                                <div className="w-full h-full flex items-center justify-center bg-horos-bg overflow-hidden relative">
-                                    {/* Geometric Background Decorative Element */}
-                                    <div className="absolute inset-0 opacity-[0.02] flex items-center justify-center pointer-events-none">
-                                        <div className="w-[800px] h-[800px] border-2 border-horos-accent rounded-full scale-150" />
-                                        <div className="absolute w-[600px] h-[600px] border border-horos-accent rounded-full" />
-                                    </div>
-
-                                    <div className="text-center animate-in zoom-in-95 duration-1000 relative z-10">
-                                        {selectedPatientId ? (
-                                            <div className="flex flex-col items-center gap-4">
-                                                <div className="w-16 h-16 rounded-3xl bg-white shadow-xl flex items-center justify-center border border-gray-50 scale-110">
-                                                    <div className="w-6 h-6 rounded-lg bg-horos-accent rotate-45 animate-pulse" />
-                                                </div>
-                                                <p className="text-gray-400 font-bold text-[11px] uppercase tracking-[0.2em]">Select series to initialize viewport</p>
-                                            </div>
-                                        ) : (
-                                            <div className="flex flex-col items-center gap-6">
-                                                <div className="relative">
-                                                    <div className="w-24 h-24 rounded-[40px] bg-white shadow-2xl flex items-center justify-center border border-gray-50 relative z-10">
-                                                        <Database className="text-horos-accent" size={32} strokeWidth={1.5} />
-                                                    </div>
-                                                    <div className="absolute -inset-4 bg-horos-accent/5 rounded-[50px] blur-2xl -z-0" />
-                                                </div>
-                                                <div className="flex flex-col gap-2">
-                                                    <h2 className="text-gray-900 font-black text-xl tracking-tight">Welcome to Horos Reborn</h2>
-                                                    <p className="text-gray-400 font-medium text-xs">Modern Radiology, Reimagined for Antigravity.</p>
-                                                </div>
-                                                <button className="primary-button !rounded-2xl !py-3 !px-8 mt-4 hover:scale-105 transition-all">
-                                                    Open Local Database
-                                                </button>
-                                            </div>
-                                        )}
-                                    </div>
+                                <div className="flex-1 flex items-center justify-center text-gray-500 font-bold uppercase tracking-[0.3em]">
+                                    No Series Selected
                                 </div>
                             )}
                         </div>
                     </div>
-                </div>
+                )}
             </div>
-        </DatabaseProvider>
+            <SettingsDialog />
+        </div>
+    );
+};
+
+function App() {
+    return (
+        <SettingsProvider>
+            <DatabaseProvider>
+                <AppContent />
+            </DatabaseProvider>
+        </SettingsProvider>
     );
 }
 

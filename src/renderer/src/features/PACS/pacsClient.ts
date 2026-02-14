@@ -89,16 +89,29 @@ export class PACSClient {
         // StudyInstanceUID: 0020000D
         // NumberOfStudyRelatedInstances: 00201208
 
-        const getString = (tag: string) => {
+        const getString = (tag: string): string => {
             const val = s[tag]?.Value;
-            if (Array.isArray(val)) return val[0];
-            return val || '';
+            if (!val) return '';
+            if (Array.isArray(val)) {
+                const first = val[0];
+                if (first === undefined || first === null) return '';
+                if (typeof first === 'object') {
+                    // Could be a PN VR: { Alphabetic: "..." }
+                    return String(first.Alphabetic || first.Ideographic || '');
+                }
+                return String(first);
+            }
+            return String(val);
         };
 
-        const getPersonName = (tag: string) => {
+        const getPersonName = (tag: string): string => {
             const val = s[tag]?.Value?.[0];
-            if (typeof val === 'object') return val.Alphabetic || '';
-            return val || '';
+            if (!val) return '';
+            if (typeof val === 'string') return val;
+            if (typeof val === 'object') {
+                return String(val.Alphabetic || val.Ideographic || val.Phonetic || '');
+            }
+            return String(val);
         };
 
         return {

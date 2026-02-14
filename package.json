@@ -5,7 +5,7 @@
     "description": "A modern, cross-platform reconstruction of the Horos DICOM viewer.",
     "main": "dist-electron/index.js",
     "author": "Antigravity Team",
-    "license": "GPL-3.0",
+    "license": "MIT",
     "scripts": {
         "dev": "vite",
         "build": "tsc && vite build && electron-builder",
@@ -14,6 +14,7 @@
     },
     "dependencies": {
         "@cornerstonejs/calculate-suv": "^1.1.0",
+        "@cornerstonejs/codec-charls": "^1.2.3",
         "@cornerstonejs/core": "^1.68.0",
         "@cornerstonejs/dicom-image-loader": "^1.68.0",
         "@cornerstonejs/nifti-volume-loader": "^1.68.0",

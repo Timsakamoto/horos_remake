@@ -1,13 +1,23 @@
 import { RxJsonSchema } from 'rxdb';
 
-export const PatientSchema: RxJsonSchema<any> = {
-    version: 0,
+export interface PatientDocType {
+    id: string;
+    patientName: string;
+    patientID: string;
+    patientBirthDate: string;
+    patientSex: string;
+    // Searchable normalized field for case-insensitive search
+    patientNameNormalized: string;
+}
+
+export const PatientSchema: RxJsonSchema<PatientDocType> = {
+    version: 2,
     primaryKey: 'id',
     type: 'object',
     properties: {
         id: {
             type: 'string',
-            maxLength: 100 // Primary Key
+            maxLength: 200
         },
         patientName: {
             type: 'string'
@@ -21,8 +31,10 @@ export const PatientSchema: RxJsonSchema<any> = {
         patientSex: {
             type: 'string'
         },
-        // Relationships (RxDB handles via query, but good to note)
-        // studies: [Study]
+        patientNameNormalized: {
+            type: 'string'
+        }
     },
-    required: ['id', 'patientName', 'patientID']
+    required: ['id', 'patientName', 'patientID'],
+    indexes: ['patientNameNormalized']
 };

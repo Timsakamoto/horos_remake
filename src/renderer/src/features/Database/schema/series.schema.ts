@@ -1,7 +1,19 @@
 import { RxJsonSchema } from 'rxdb';
 
-export const SeriesSchema: RxJsonSchema<any> = {
-    version: 0,
+export interface SeriesDocType {
+    seriesInstanceUID: string;
+    modality: string;
+    seriesDate: string;
+    seriesDescription: string;
+    seriesNumber: number;
+    numberOfSeriesRelatedInstances: number;
+    bodyPartExamined: string;
+    protocolName: string;
+    studyInstanceUID: string;
+}
+
+export const SeriesSchema: RxJsonSchema<SeriesDocType> = {
+    version: 1,
     primaryKey: 'seriesInstanceUID',
     type: 'object',
     properties: {
@@ -21,11 +33,20 @@ export const SeriesSchema: RxJsonSchema<any> = {
         seriesNumber: {
             type: 'number'
         },
+        numberOfSeriesRelatedInstances: {
+            type: 'number'
+        },
+        bodyPartExamined: {
+            type: 'string'
+        },
+        protocolName: {
+            type: 'string'
+        },
         studyInstanceUID: {
-            type: 'string', // Foreign Key to Study
-            ref: 'study'
+            type: 'string',
+            ref: 'T_Study'
         }
     },
     required: ['seriesInstanceUID', 'studyInstanceUID'],
-    indexes: ['studyInstanceUID']
+    indexes: ['studyInstanceUID', 'modality']
 };

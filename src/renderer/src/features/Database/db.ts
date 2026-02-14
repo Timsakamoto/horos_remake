@@ -1,20 +1,19 @@
-import { createRxDatabase, RxDatabase, RxCollection } from 'rxdb';
+import { createRxDatabase, RxDatabase, RxCollection, addRxPlugin } from 'rxdb';
 import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
-import { PatientSchema } from './schema/patient.schema';
-import { StudySchema } from './schema/study.schema';
-import { SeriesSchema } from './schema/series.schema';
-import { ImageSchema } from './schema/image.schema';
+import { RxDBMigrationSchemaPlugin } from 'rxdb/plugins/migration-schema';
+import { PatientSchema, PatientDocType } from './schema/patient.schema';
+import { StudySchema, StudyDocType } from './schema/study.schema';
+import { SeriesSchema, SeriesDocType } from './schema/series.schema';
+import { ImageSchema, ImageDocType } from './schema/image.schema';
 
-// Enable dev mode
-// import { addRxPlugin } from 'rxdb';
-// import { RxDBDevModePlugin } from 'rxdb/plugins/dev-mode';
-// addRxPlugin(RxDBDevModePlugin);
+// Add mandatory plugins
+addRxPlugin(RxDBMigrationSchemaPlugin);
 
 export type AntigravityDatabaseCollections = {
-    patients: RxCollection<any>;
-    studies: RxCollection<any>;
-    series: RxCollection<any>;
-    images: RxCollection<any>;
+    T_Patient: RxCollection<PatientDocType>;
+    T_Study: RxCollection<StudyDocType>;
+    T_Subseries: RxCollection<SeriesDocType>;
+    T_FilePath: RxCollection<ImageDocType>;
 };
 
 export type AntigravityDatabase = RxDatabase<AntigravityDatabaseCollections>;
@@ -24,32 +23,72 @@ let dbPromise: Promise<AntigravityDatabase> | null = null;
 const _create = async (): Promise<AntigravityDatabase> => {
     console.log('DatabaseService: Creating database...');
 
-    // Create database instance
-    const db = await createRxDatabase<AntigravityDatabaseCollections>({
-        name: 'antigravitydb',
-        storage: getRxStorageDexie() // Use Dexie (IndexedDB wrapper) for storage
-    });
+    try {
+        const db = await createRxDatabase<AntigravityDatabaseCollections>({
+            name: 'antigravitydb',
+            storage: getRxStorageDexie()
+        });
 
-    console.log('DatabaseService: Adding collections...');
+        console.log('DatabaseService: Adding collections...');
 
-    // Add collections
-    await db.addCollections({
-        patients: {
-            schema: PatientSchema
-        },
-        studies: {
-            schema: StudySchema
-        },
-        series: {
-            schema: SeriesSchema
-        },
-        images: {
-            schema: ImageSchema
-        }
-    });
+        await db.addCollections({
+            T_Patient: {
+                schema: PatientSchema,
+                migrationStrategies: {
+                    1: (oldDoc) => ({
+                        ...oldDoc,
+                        patientNameNormalized: String(oldDoc.patientName || '').toLowerCase()
+                    }),
+                    2: (oldDoc) => oldDoc // No change needed for existing records, but schema version bumped
+                }
+            },
+            T_Study: {
+                schema: StudySchema,
+                migrationStrategies: {
+                    1: (oldDoc) => ({
+                        ...oldDoc,
+                        numberOfStudyRelatedSeries: 0,
+                        numberOfStudyRelatedInstances: 0,
+                        studyDescriptionNormalized: (oldDoc.studyDescription || '').toLowerCase()
+                    })
+                }
+            },
+            T_Subseries: {
+                schema: SeriesSchema,
+                migrationStrategies: {
+                    1: (oldDoc) => ({
+                        ...oldDoc,
+                        numberOfSeriesRelatedInstances: 0,
+                        bodyPartExamined: '',
+                        protocolName: ''
+                    })
+                }
+            },
+            T_FilePath: {
+                schema: ImageSchema,
+                migrationStrategies: {
+                    1: (oldDoc) => oldDoc,
+                    2: (oldDoc) => ({
+                        ...oldDoc,
+                        fileSize: 0,
+                        transferSyntaxUID: ''
+                    }),
+                    3: (oldDoc) => ({
+                        ...oldDoc,
+                        windowCenter: 40,
+                        windowWidth: 400
+                    }),
+                    4: (oldDoc) => oldDoc
+                }
+            }
+        });
 
-    console.log('DatabaseService: Database created');
-    return db;
+        console.log('DatabaseService: Database created');
+        return db;
+    } catch (err) {
+        console.error('DatabaseService: Error in _create:', err);
+        throw err;
+    }
 };
 
 export const getDatabase = (): Promise<AntigravityDatabase> => {
@@ -57,4 +96,10 @@ export const getDatabase = (): Promise<AntigravityDatabase> => {
         dbPromise = _create();
     }
     return dbPromise;
+};
+
+export const removeDatabase = async () => {
+    const { removeRxDatabase } = await import('rxdb');
+    dbPromise = null;
+    await removeRxDatabase('antigravitydb', getRxStorageDexie());
 };

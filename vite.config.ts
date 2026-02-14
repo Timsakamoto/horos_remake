@@ -28,4 +28,10 @@ export default defineConfig({
             '@main': path.resolve(__dirname, 'src/main'),
         },
     },
+    build: {
+        target: 'esnext',
+    },
+    optimizeDeps: {
+        exclude: ['@icr/polyseg-wasm'],
+    }
 })
