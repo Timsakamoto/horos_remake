@@ -1,8 +1,15 @@
 import { Server, Database, Globe } from 'lucide-react';
 import { usePACS } from './PACSProvider';
+import { useSettings } from '../Settings/SettingsContext';
 
 export const PACSServerList = () => {
     const { servers, activeServer, setActiveServer } = usePACS();
+    const { setShowSettings, setActiveSection } = useSettings();
+
+    const onOpenPACSConfig = () => {
+        setActiveSection('pacs');
+        setShowSettings(true);
+    };
 
     return (
         <div className="w-72 bg-white border-r border-gray-100 flex flex-col h-full select-none shadow-[1px_0_0_0_rgba(0,0,0,0.02)]">
@@ -15,7 +22,7 @@ export const PACSServerList = () => {
                 <div className="space-y-0.5">
                     {/* Local DB Placeholder - LiftKit Optical Symmetry */}
                     <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-gray-50 cursor-pointer text-gray-600 group transition-all">
-                        <Database size={16} className="text-gray-400 group-hover:text-horos-accent transition-colors" />
+                        <Database size={16} className="text-gray-400 group-hover:text-peregrine-accent transition-colors" />
                         <span className="text-[13px] font-semibold tracking-tight">Local Database</span>
                     </div>
 
@@ -28,13 +35,13 @@ export const PACSServerList = () => {
                                 key={server.id}
                                 onClick={() => setActiveServer(server)}
                                 className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group cursor-pointer ${activeServer?.id === server.id
-                                        ? 'bg-blue-50 text-horos-accent shadow-sm'
-                                        : 'hover:bg-gray-50 text-gray-600'
+                                    ? 'bg-blue-50 text-peregrine-accent shadow-sm'
+                                    : 'hover:bg-gray-50 text-gray-600'
                                     }`}
                             >
                                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${activeServer?.id === server.id
-                                        ? 'bg-horos-accent text-white scale-105'
-                                        : 'bg-blue-50 text-horos-accent group-hover:bg-horos-accent group-hover:text-white'
+                                    ? 'bg-peregrine-accent text-white scale-105'
+                                    : 'bg-blue-50 text-peregrine-accent group-hover:bg-peregrine-accent group-hover:text-white'
                                     }`}>
                                     <Globe size={16} />
                                 </div>
@@ -51,7 +58,11 @@ export const PACSServerList = () => {
 
             {/* Bottom Controls - Clean Flat */}
             <div className="p-4 border-t border-gray-50 bg-gray-50/30 flex justify-between items-center">
-                <button className="flat-button !p-2">
+                <button
+                    onClick={onOpenPACSConfig}
+                    className="flat-button !p-2 hover:bg-gray-100 transition-colors"
+                    title="PACS Network Preferences"
+                >
                     <Server size={14} className="text-gray-500" />
                 </button>
                 <div className="flex items-center gap-2">

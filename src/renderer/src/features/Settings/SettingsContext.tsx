@@ -11,6 +11,8 @@ interface SettingsContextType {
     lastUpdateStatus: 'success' | 'error' | null;
     showSettings: boolean;
     setShowSettings: (show: boolean) => void;
+    activeSection: 'general' | 'pacs';
+    setActiveSection: (section: 'general' | 'pacs') => void;
 }
 
 const SettingsContext = createContext<SettingsContextType>({
@@ -22,6 +24,8 @@ const SettingsContext = createContext<SettingsContextType>({
     lastUpdateStatus: null,
     showSettings: false,
     setShowSettings: () => { },
+    activeSection: 'general',
+    setActiveSection: () => { }
 });
 
 export const useSettings = () => useContext(SettingsContext);
@@ -32,6 +36,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const [isUpdating, setIsUpdating] = useState(false);
     const [lastUpdateStatus, setLastUpdateStatus] = useState<'success' | 'error' | null>(null);
     const [showSettings, setShowSettings] = useState(false);
+    const [activeSection, setActiveSection] = useState<'general' | 'pacs'>('general');
     const [isLoaded, setIsLoaded] = useState(false);
 
     // Robust Persistence Initialization
@@ -55,8 +60,8 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                     if (settings.databasePath) setDatabasePathState(settings.databasePath);
                 } else {
                     // 2. Fallback to localStorage if no file
-                    const savedMode = localStorage.getItem('horos_view_mode');
-                    const savedPath = localStorage.getItem('horos_database_path');
+                    const savedMode = localStorage.getItem('peregrine_view_mode');
+                    const savedPath = localStorage.getItem('peregrine_database_path');
 
                     if (savedMode === 'patient' || savedMode === 'study') setViewModeState(savedMode);
                     if (savedPath) {
@@ -64,7 +69,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                     } else {
                         // 3. Fallback to default path
                         // @ts-ignore
-                        const defaultPath = await window.electron.join(userData, 'HorosData', 'DICOM');
+                        const defaultPath = await window.electron.join(userData, 'PeregrineData', 'DICOM');
                         setDatabasePathState(defaultPath);
                     }
                 }
@@ -95,8 +100,8 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 await window.electron.writeFile(settingsFile, data);
 
                 // Keep localStorage in sync as backup
-                localStorage.setItem('horos_view_mode', viewMode);
-                if (databasePath) localStorage.setItem('horos_database_path', databasePath);
+                localStorage.setItem('peregrine_view_mode', viewMode);
+                if (databasePath) localStorage.setItem('peregrine_database_path', databasePath);
 
                 console.log('SettingsContext: Persisted settings to disk');
             } catch (e) {
@@ -135,7 +140,9 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             isUpdating,
             lastUpdateStatus,
             showSettings,
-            setShowSettings
+            setShowSettings,
+            activeSection,
+            setActiveSection
         }}>
             {children}
         </SettingsContext.Provider>

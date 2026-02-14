@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, session } from 'electron'
 import { join, basename, dirname } from 'node:path'
 import { readFile, writeFile, readdir, stat, mkdir, copyFile, unlink } from 'node:fs/promises'
+import { DICOMService } from './dicom/DICOMService'
 
 // The built directory structure
 //
@@ -17,11 +18,13 @@ let win: BrowserWindow | null
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
+let dicomService: DICOMService;
+
 function createWindow() {
     win = new BrowserWindow({
         width: 1200,
         height: 800,
-        backgroundColor: '#1a1a1a', // Horos dark grey
+        backgroundColor: '#1a1a1a', // Peregrine dark grey
         webPreferences: {
             preload: join(__dirname, 'preload.js'),
             nodeIntegration: false,
@@ -30,9 +33,25 @@ function createWindow() {
         titleBarStyle: 'hiddenInset', // Mac-like title bar
     })
 
+    win.on('closed', () => {
+        win = null;
+    });
+
     // Test active push message to Console
     win.webContents.on('did-finish-load', () => {
         win?.webContents.send('main-process-message', (new Date).toLocaleString())
+    })
+
+    // Enable SharedArrayBuffer
+    // Enable SharedArrayBuffer
+    win.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+        callback({
+            responseHeaders: {
+                ...details.responseHeaders,
+                'Cross-Origin-Opener-Policy': ['same-origin'],
+                'Cross-Origin-Embedder-Policy': ['require-corp'],
+            },
+        })
     })
 
     if (VITE_DEV_SERVER_URL) {
@@ -52,6 +71,11 @@ ipcMain.handle('dialog:openFile', async () => {
 
 ipcMain.handle('fs:readdirRecursive', async (_, dirPath: string) => {
     try {
+        const stats = await stat(dirPath);
+        if (!stats.isDirectory()) {
+            return [dirPath];
+        }
+
         const results: string[] = [];
         const walk = async (dir: string) => {
             const files = await readdir(dir, { withFileTypes: true });
@@ -67,15 +91,35 @@ ipcMain.handle('fs:readdirRecursive', async (_, dirPath: string) => {
         await walk(dirPath);
         return results;
     } catch (err) {
-        console.error(err);
+        console.error('fs:readdirRecursive error:', err);
         return [];
     }
 });
 
-ipcMain.handle('fs:readFile', async (_, filePath) => {
+ipcMain.handle('fs:readFile', async (_, filePath, options) => {
     try {
         const fileStats = await stat(filePath);
         if (fileStats.isDirectory()) return null;
+
+        if (options && typeof options === 'object' && options.length) {
+            // Partial read
+            const { open } = require('node:fs/promises');
+            const handle = await open(filePath, 'r');
+            // @ts-ignore
+            const { buffer, bytesRead } = await handle.read({
+                buffer: Buffer.allocUnsafe(options.length),
+                length: options.length,
+                position: options.start || 0
+            });
+            await handle.close();
+            // Return only the bytes read if less than requested
+            if (bytesRead < options.length) {
+                return buffer.subarray(0, bytesRead);
+            }
+            return buffer;
+        }
+
+        // Full read
         return await readFile(filePath)
     } catch (err) {
         console.error(err)
@@ -143,10 +187,30 @@ ipcMain.handle('app:toggleMaximize', () => {
     }
 });
 
-ipcMain.on('app:openViewer', (_, seriesUid: string) => {
+ipcMain.handle('app:returnToDatabase', (event) => {
+    if (win && !win.isDestroyed()) {
+        win.show();
+        win.focus();
+
+        // If the window calling this is NOT the main window, close it
+        const senderWin = BrowserWindow.fromWebContents(event.sender);
+        if (senderWin && senderWin !== win) {
+            senderWin.close();
+        }
+        return true;
+    }
+    return false;
+});
+
+ipcMain.on('app:openViewer', (event, seriesUid: string) => {
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    const bounds = senderWin ? senderWin.getBounds() : null;
+
     const viewerWin = new BrowserWindow({
-        width: 1200,
-        height: 800,
+        width: bounds ? bounds.width : 1200,
+        height: bounds ? bounds.height : 800,
+        x: bounds ? bounds.x + 20 : undefined, // Slightly offset for visibility
+        y: bounds ? bounds.y + 20 : undefined,
         backgroundColor: '#000000',
         webPreferences: {
             preload: join(__dirname, 'preload.js'),
@@ -173,5 +237,6 @@ app.on('activate', () => {
 })
 
 app.whenReady().then(() => {
+    dicomService = new DICOMService();
     createWindow()
 })

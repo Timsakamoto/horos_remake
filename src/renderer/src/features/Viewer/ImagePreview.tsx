@@ -55,10 +55,11 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({ seriesUid }) => {
                             renderingEngineId={`preview-engine-${seriesUid}`}
                             seriesUid={seriesUid}
                             showOverlays={false}
+                            autoFit={true}
                         />
                     </div>
 
-                    {/* Corner Overlays (Horos Style) */}
+                    {/* Corner Overlays (Peregrine Style) */}
                     <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between z-20">
                         <div className="flex justify-between items-start">
                             {/* Top Left: Patient Info */}
@@ -75,7 +76,7 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({ seriesUid }) => {
                         <div className="flex justify-between items-end">
                             {/* Bottom Left: Series Info */}
                             <div className="flex flex-col">
-                                <span className="text-[10px] font-black text-horos-accent uppercase tracking-widest shadow-sm">
+                                <span className="text-[10px] font-black text-peregrine-accent uppercase tracking-widest shadow-sm">
                                     Series {meta?.seriesNumber}: {meta?.seriesDescription?.slice(0, 20)}
                                 </span>
                                 <span className="text-[9px] text-white/50 font-bold shadow-sm">{meta?.modality} | {meta?.numImages} Imgs</span>
@@ -83,7 +84,7 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({ seriesUid }) => {
                             {/* Bottom Right: Image Specs */}
                             <div className="flex flex-col items-end">
                                 <span className="text-[10px] text-white/70 font-mono shadow-sm">512 x 512</span>
-                                <span className="text-[11px] font-black text-horos-accent shadow-sm">PREVIEW</span>
+                                <span className="text-[11px] font-black text-peregrine-accent shadow-sm">PREVIEW</span>
                             </div>
                         </div>
                     </div>

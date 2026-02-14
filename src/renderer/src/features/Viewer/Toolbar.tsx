@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
     LayoutGrid,
-    Box,
     Layers,
     Move,
     Sun,
@@ -42,6 +41,7 @@ export type ToolMode =
     | 'Arrow'
     | 'Bidirectional'
     | 'Magnify'
+    | 'Crosshairs'
     | 'Text';
 
 export type ProjectionMode = 'NORMAL' | 'MIP' | 'MINIP';
@@ -119,8 +119,11 @@ export const Toolbar = ({
 
         const handleClick = () => {
             if (isDisabled) return;
-            if (mode === 'MPR') {
-                if (activeView === 'MPR') {
+            // The user wants Slab/MIP controls for Axial, Coronal, and Sagittal, but NOT for MPR.
+            const isSectional = mode === 'Axial' || mode === 'Coronal' || mode === 'Sagittal';
+
+            if (isSectional) {
+                if (activeView === mode) {
                     setShowMPRControls(!showMPRControls);
                 } else {
                     onViewChange(mode);
@@ -140,7 +143,7 @@ export const Toolbar = ({
                     className={`
                     relative flex flex-col items-center justify-center min-w-[52px] h-[52px] rounded-lg transition-all duration-300 gap-1
                     ${activeView === mode
-                            ? 'bg-white text-horos-accent shadow-[0_2px_8px_rgba(0,0,0,0.08)] scale-[1.02] z-10'
+                            ? 'bg-white text-peregrine-accent shadow-[0_2px_8px_rgba(0,0,0,0.08)] scale-[1.02] z-10'
                             : isDisabled
                                 ? 'text-gray-200 cursor-not-allowed opacity-30'
                                 : 'text-gray-400 hover:text-gray-600 hover:bg-black/5'}
@@ -150,12 +153,12 @@ export const Toolbar = ({
                     <Icon size={18} strokeWidth={activeView === mode ? 2.5 : 2} />
                     <span className={`text-[10px] font-black uppercase tracking-tighter ${activeView === mode ? 'opacity-100' : 'opacity-60'}`}>{label}</span>
                     {activeView === mode && (
-                        <div className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-horos-accent animate-in fade-in zoom-in duration-500" />
+                        <div className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-peregrine-accent animate-in fade-in zoom-in duration-500" />
                     )}
                 </button>
 
-                {/* MPR Controls Popup */}
-                {mode === 'MPR' && activeView === 'MPR' && showMPRControls && (
+                {/* Section Controls Popup (Axial, Coronal, Sagittal) */}
+                {(mode === 'Axial' || mode === 'Coronal' || mode === 'Sagittal') && activeView === mode && showMPRControls && (
                     <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-white/90 backdrop-blur-md border border-gray-200 shadow-xl rounded-xl p-3 z-50 animate-in fade-in zoom-in-95 duration-200 w-64 flex flex-col gap-3">
                         {/* Triangle Arrow */}
                         <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white rotate-45 border-t border-l border-gray-200" />
@@ -169,7 +172,7 @@ export const Toolbar = ({
                                     className={`
                                             flex-1 py-1.5 text-[9px] font-black rounded-md transition-all tracking-wider
                                             ${projectionMode === m
-                                            ? 'bg-white text-horos-accent shadow-sm'
+                                            ? 'bg-white text-peregrine-accent shadow-sm'
                                             : 'text-gray-400 hover:text-gray-600 hover:bg-black/5'}
                                         `}
                                 >
@@ -182,16 +185,16 @@ export const Toolbar = ({
                         <div className="flex flex-col gap-1">
                             <div className="flex justify-between items-center px-1">
                                 <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider">Slab Thickness</span>
-                                <span className="text-[10px] font-black text-horos-accent">{slabThickness} mm</span>
+                                <span className="text-[10px] font-black text-peregrine-accent">{slabThickness} mm</span>
                             </div>
                             <input
                                 type="range"
                                 min="0"
-                                max="50"
+                                max="10"
                                 step="1"
                                 value={slabThickness}
                                 onChange={(e) => onSlabThicknessChange?.(parseInt(e.target.value))}
-                                className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-horos-accent hover:accent-blue-600"
+                                className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-peregrine-accent hover:accent-blue-600"
                             />
                         </div>
                     </div>
@@ -206,7 +209,7 @@ export const Toolbar = ({
             className={`
                 group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1.5
                 ${activeTool === tool
-                    ? 'bg-blue-50/50 text-horos-accent shadow-inner'
+                    ? 'bg-blue-50/50 text-peregrine-accent shadow-inner'
                     : 'text-gray-400 hover:bg-gray-50 hover:text-gray-600'
                 }
             `}
@@ -231,7 +234,6 @@ export const Toolbar = ({
                 <div className="flex-1 flex items-center pl-8 pr-8 no-drag">
                     <div className="flex bg-[#000000]/5 p-0.5 rounded-lg gap-0.5 border border-[#000000]/10 shadow-inner">
                         {renderViewButton('Database', Database, 'Local DB')}
-                        {renderViewButton('PACS', Database, 'PACS')}
                     </div>
 
                     <div className="h-10 w-[1.5px] bg-[#000000]/15 mx-4 shadow-[1px_0_0_rgba(255,255,255,0.4)]" />
@@ -245,7 +247,7 @@ export const Toolbar = ({
                             className="group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1 bg-white hover:bg-gray-50 text-gray-600 border border-[#c0c0c0] shadow-sm hover:scale-105 active:scale-95"
                             title="Import DICOM Files"
                         >
-                            <div className="p-0.5 text-horos-accent">
+                            <div className="p-0.5 text-peregrine-accent">
                                 <Layers size={20} strokeWidth={2.5} />
                             </div>
                             <span className="text-[8px] font-black uppercase tracking-widest">Import</span>
@@ -253,7 +255,7 @@ export const Toolbar = ({
 
                         <button
                             onClick={onOpenViewer}
-                            className="group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1 bg-gradient-to-b from-horos-accent to-[#005bb7] text-white shadow-[0_2px_10px_rgba(0,103,209,0.3)] hover:scale-105 active:scale-95 border border-[#004a95]"
+                            className="group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1 bg-gradient-to-b from-peregrine-accent to-[#005bb7] text-white shadow-[0_2px_10px_rgba(0,103,209,0.3)] hover:scale-105 active:scale-95 border border-[#004a95]"
                             title="Open in Viewer"
                         >
                             <Layers size={20} strokeWidth={2.5} />
@@ -266,7 +268,7 @@ export const Toolbar = ({
                     <div className="flex items-center gap-2">
                         <button
                             onClick={onOpenSettings}
-                            className="group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1 bg-white hover:bg-gray-50 text-gray-500 hover:text-horos-accent border border-[#c0c0c0] shadow-sm hover:scale-105 active:scale-95"
+                            className="group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1 bg-white hover:bg-gray-50 text-gray-500 hover:text-peregrine-accent border border-[#c0c0c0] shadow-sm hover:scale-105 active:scale-95"
                             title="Preferences"
                         >
                             <div className="p-0.5">
@@ -281,7 +283,6 @@ export const Toolbar = ({
                     {/* Database & PACS Navigation (Persistent) */}
                     <div className="flex bg-[#000000]/5 p-0.5 rounded-lg gap-0.5 mr-6 border border-[#000000]/10 shadow-inner">
                         {renderViewButton('Database', Database, 'Local DB')}
-                        {renderViewButton('PACS', Database, 'PACS')}
                     </div>
 
                     <div className="h-10 w-[1.5px] bg-[#000000]/15 mr-6 shadow-[1px_0_0_rgba(255,255,255,0.4)]" />
@@ -301,6 +302,7 @@ export const Toolbar = ({
 
                     {/* Standard Tools Group */}
                     <div className="flex gap-1 mr-6 relative">
+                        {activeView === 'MPR' && renderToolButton('Crosshairs', Crosshair, 'Sync')}
                         {renderToolButton('WindowLevel', Sun, 'W/L')}
                         {renderToolButton('Pan', Move, 'Pan')}
                         {renderToolButton('Magnify', Maximize, 'Mag')}
@@ -338,7 +340,7 @@ export const Toolbar = ({
                                 <select
                                     value={activeCLUT}
                                     onChange={(e) => onCLUTChange?.(e.target.value)}
-                                    className="appearance-none bg-white border border-gray-300 rounded-lg px-2 py-0.5 text-[9px] font-bold text-gray-700 w-full focus:outline-none focus:ring-1 focus:ring-horos-accent pr-5"
+                                    className="appearance-none bg-white border border-gray-300 rounded-lg px-2 py-0.5 text-[9px] font-bold text-gray-700 w-full focus:outline-none focus:ring-1 focus:ring-peregrine-accent pr-5"
                                 >
                                     {CLUT_PRESETS.map(p => (
                                         <option key={p.name} value={p.name}>{p.name}</option>

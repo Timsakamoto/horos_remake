@@ -12,17 +12,27 @@ import {
     TrackballRotateTool,
     ZoomTool,
     PanTool,
+    LengthTool,
+    AngleTool,
+    RectangleROITool,
+    EllipticalROITool,
+    ProbeTool,
+    ArrowAnnotateTool,
+    BidirectionalTool,
+    CobbAngleTool,
+    MagnifyTool,
     Enums as csToolsEnums
 } from '@cornerstonejs/tools';
 import { initCornerstone } from './init';
 import { useDatabase } from '../Database/DatabaseProvider';
 import { useSettings } from '../Settings/SettingsContext';
 import { registerElectronImageLoader, prefetchMetadata } from './electronLoader';
+import { ToolMode } from './Toolbar';
 
 const { ViewportType } = Enums;
 const { MouseBindings } = csToolsEnums;
 
-const VR_RENDERING_ENGINE_ID = 'horos-engine';
+const VR_RENDERING_ENGINE_ID = 'peregrine-engine';
 const VR_VIEWPORT_ID = 'vr-viewport';
 const VR_TOOL_GROUP_ID = 'vr-tool-group';
 
@@ -31,23 +41,47 @@ interface Props {
     isClipping?: boolean;
     clippingRange?: number;
     isAutoRotating?: boolean;
+    activeTool: ToolMode;
 }
 
 export const VRView = ({
     seriesUid,
     isClipping = false,
     clippingRange = 50,
-    isAutoRotating = false
+    isAutoRotating = false,
+    activeTool
 }: Props) => {
     const elementRef = useRef<HTMLDivElement>(null);
     const { db } = useDatabase();
     const { databasePath } = useSettings();
     const [status, setStatus] = useState<string>('');
     const [activePreset, setActivePreset] = useState<string>('CT-Bone');
+    const [isInteracting, setIsInteracting] = useState(false);
+
+    // Track interaction for adaptive quality
+    useEffect(() => {
+        const el = elementRef.current;
+        if (!el) return;
+
+        const handleDown = () => setIsInteracting(true);
+        const handleUp = () => setIsInteracting(false);
+
+        el.addEventListener('mousedown', handleDown);
+        window.addEventListener('mouseup', handleUp);
+
+        return () => {
+            el.removeEventListener('mousedown', handleDown);
+            window.removeEventListener('mouseup', handleUp);
+        };
+    }, []);
 
     useEffect(() => {
         // Register Tools - wrap in try-catch since they may already be registered
-        [TrackballRotateTool, ZoomTool, PanTool].forEach(tool => {
+        [
+            TrackballRotateTool, ZoomTool, PanTool, MagnifyTool,
+            LengthTool, AngleTool, RectangleROITool, EllipticalROITool, ProbeTool,
+            ArrowAnnotateTool, BidirectionalTool, CobbAngleTool
+        ].forEach(tool => {
             try { addTool(tool); } catch (e) { /* already registered */ }
         });
 
@@ -57,7 +91,12 @@ export const VRView = ({
         }
 
         if (toolGroup) {
-            const toolNames = [TrackballRotateTool.toolName, ZoomTool.toolName, PanTool.toolName];
+            const toolNames = [
+                TrackballRotateTool.toolName, ZoomTool.toolName, PanTool.toolName, MagnifyTool.toolName,
+                LengthTool.toolName, AngleTool.toolName, RectangleROITool.toolName,
+                EllipticalROITool.toolName, ProbeTool.toolName, ArrowAnnotateTool.toolName,
+                BidirectionalTool.toolName, CobbAngleTool.toolName
+            ];
             toolNames.forEach(name => {
                 if (!toolGroup!.hasTool(name)) toolGroup!.addTool(name);
             });
@@ -200,6 +239,71 @@ export const VRView = ({
         viewport.render();
     }, [activePreset]);
 
+    // Adaptive Quality Management
+    useEffect(() => {
+        const renderingEngine = getRenderingEngine(VR_RENDERING_ENGINE_ID);
+        if (!renderingEngine) return;
+
+        const viewport = renderingEngine.getViewport(VR_VIEWPORT_ID) as Types.IVolumeViewport;
+        if (!viewport) return;
+
+        // Dynamic sampling distance: 2.0 (faster/lower quality) during interaction, 0.5 (sharper) when idle.
+        (viewport as any).setProperties({
+            samplingDistance: isInteracting ? 2.0 : 0.5
+        });
+        viewport.render();
+    }, [isInteracting]);
+
+    // Handle Tool Activation (New)
+    useEffect(() => {
+        const toolGroup = ToolGroupManager.getToolGroup(VR_TOOL_GROUP_ID);
+        if (!toolGroup) return;
+
+        try {
+            // Set ALL tools to passive first
+            const allTools = [
+                TrackballRotateTool.toolName, PanTool.toolName, ZoomTool.toolName, MagnifyTool.toolName,
+                LengthTool.toolName, AngleTool.toolName, RectangleROITool.toolName,
+                EllipticalROITool.toolName, ProbeTool.toolName, ArrowAnnotateTool.toolName,
+                BidirectionalTool.toolName, CobbAngleTool.toolName
+            ];
+            allTools.forEach(tn => {
+                if (toolGroup.hasTool(tn)) toolGroup.setToolPassive(tn);
+            });
+
+            let primary = '';
+            if (activeTool === 'Pan') primary = PanTool.toolName;
+            else if (activeTool === 'Zoom') primary = ZoomTool.toolName;
+            else if (activeTool === 'Length') primary = LengthTool.toolName;
+            else if (activeTool === 'Angle') primary = AngleTool.toolName;
+            else if (activeTool === 'Rectangle') primary = RectangleROITool.toolName;
+            else if (activeTool === 'Ellipse') primary = EllipticalROITool.toolName;
+            else if (activeTool === 'Probe') primary = ProbeTool.toolName;
+            else if (activeTool === 'Arrow') primary = ArrowAnnotateTool.toolName;
+            else if (activeTool === 'Bidirectional') primary = BidirectionalTool.toolName;
+            else if (activeTool === 'Magnify') primary = MagnifyTool.toolName || 'Magnify';
+            else if (activeTool === 'Text') primary = ArrowAnnotateTool.toolName || 'ArrowAnnotate';
+            else {
+                // Default for VR is Rotate
+                primary = TrackballRotateTool.toolName;
+            }
+
+            if (primary && toolGroup.hasTool(primary)) {
+                toolGroup.setToolActive(primary, { bindings: [{ mouseButton: MouseBindings.Primary }] });
+            }
+
+            // Bind auxiliary/secondary for Pan/Zoom
+            if (primary !== PanTool.toolName) {
+                toolGroup.setToolActive(PanTool.toolName, { bindings: [{ mouseButton: MouseBindings.Auxiliary }] });
+            }
+            if (primary !== ZoomTool.toolName) {
+                toolGroup.setToolActive(ZoomTool.toolName, { bindings: [{ mouseButton: MouseBindings.Secondary }] });
+            }
+        } catch (e) {
+            console.warn('VRView: Tool Activation Error:', e);
+        }
+    }, [(activeTool as any)]); // Type cast to avoid issues if ToolMode doesn't match exactly
+
     // Handle Clipping (D5)
     useEffect(() => {
         const renderingEngine = getRenderingEngine(VR_RENDERING_ENGINE_ID);
@@ -286,7 +390,7 @@ export const VRView = ({
         <div className="w-full h-full relative bg-black">
             {status && (
                 <div className="absolute top-4 left-4 z-50 text-white bg-black/50 px-2 py-1 rounded text-sm pointer-events-none flex items-center gap-2">
-                    <div className="w-3 h-3 border-2 border-horos-accent border-t-transparent rounded-full animate-spin" />
+                    <div className="w-3 h-3 border-2 border-peregrine-accent border-t-transparent rounded-full animate-spin" />
                     {status}
                 </div>
             )}
@@ -307,7 +411,7 @@ export const VRView = ({
                 <div className="bg-black/50 p-2 rounded text-white text-xs">
                     <div className="font-bold mb-1 uppercase tracking-widest text-[10px]">3D VR Presets</div>
                     <select
-                        className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs w-full outline-none focus:ring-1 focus:ring-horos-accent"
+                        className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs w-full outline-none focus:ring-1 focus:ring-peregrine-accent"
                         value={activePreset}
                         onChange={(e) => setActivePreset(e.target.value)}
                     >

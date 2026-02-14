@@ -11,6 +11,12 @@ export interface ImageDocType {
     seriesInstanceUID: string;
     windowCenter: number;
     windowWidth: number;
+    rescaleIntercept: number;
+    rescaleSlope: number;
+    imagePositionPatient?: number[];
+    imageOrientationPatient?: number[];
+    pixelSpacing?: number[];
+    sliceThickness?: number;
 }
 
 export const ImageSchema: RxJsonSchema<ImageDocType> = {
@@ -48,6 +54,27 @@ export const ImageSchema: RxJsonSchema<ImageDocType> = {
             type: 'number'
         },
         windowWidth: {
+            type: 'number'
+        },
+        rescaleIntercept: {
+            type: 'number'
+        },
+        rescaleSlope: {
+            type: 'number'
+        },
+        imagePositionPatient: {
+            type: 'array',
+            items: { type: 'number' }
+        },
+        imageOrientationPatient: {
+            type: 'array',
+            items: { type: 'number' }
+        },
+        pixelSpacing: {
+            type: 'array',
+            items: { type: 'number' }
+        },
+        sliceThickness: {
             type: 'number'
         }
     },

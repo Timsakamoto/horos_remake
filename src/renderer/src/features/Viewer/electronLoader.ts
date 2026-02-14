@@ -15,7 +15,7 @@ function normalizePath(p: string): string {
     // Replace all backslashes with forward slashes for cross-platform key consistency
     filePath = filePath.replace(/\\/g, '/');
     if (!filePath.startsWith('/') && !filePath.includes(':')) {
-        const managedDir = localStorage.getItem('horos_database_path');
+        const managedDir = localStorage.getItem('peregrine_database_path');
         if (managedDir) {
             const cleanDir = managedDir.replace(/\\/g, '/').replace(/\/$/, '');
             filePath = cleanDir + '/' + filePath.replace(/^\//, '');
@@ -60,8 +60,15 @@ export function registerElectronImageLoader() {
         decodeConfig: { convertFloatPixelDataToInt: false },
     });
     imageLoader.registerImageLoader('electronfile', loadElectronImage);
-    // Remove if already exists with same priority (optional but good practice)
-    metaData.addProvider(electronMetadataProvider, 10000);
+    // Protect from multiple provider registrations
+    try {
+        // @ts-ignore
+        if (!metaData.getProvider(electronMetadataProvider)) {
+            metaData.addProvider(electronMetadataProvider, 10000);
+        }
+    } catch (e) {
+        metaData.addProvider(electronMetadataProvider, 10000);
+    }
 }
 
 function electronMetadataProvider(type: string, ...queries: any[]) {
@@ -127,7 +134,7 @@ function electronMetadataProvider(type: string, ...queries: any[]) {
 }
 
 class ConcurrencyLimiter {
-    private maxConcurrent = 15;
+    private maxConcurrent = 30; // Increased
     private running = 0;
     private queue: (() => void)[] = [];
     async run<T>(fn: () => Promise<T>): Promise<T> {
@@ -366,9 +373,10 @@ export async function prefetchMetadata(imageIds: string[]) {
 }
 
 export function loadElectronImage(imageId: string) {
+    console.log(`Loader: loadElectronImage triggered for ${imageId}`);
     return {
         promise: (async () => {
-            console.log(`Loader: loadElectronImage triggered for ${imageId}`);
+            // ...
             totalLoadedImages++;
             if (totalLoadedImages % 10 === 0) {
                 console.log(`[Loader] Progress: ${totalLoadedImages} images loaded.`);
@@ -393,7 +401,7 @@ export function loadElectronImage(imageId: string) {
             const numPixels = rows * columns * samplesPerPixel;
             let float32Data = new Float32Array(numPixels);
 
-            // --- ★ Universal Pixel Pipeline (Horos Architecture) ---
+            // --- ★ Universal Pixel Pipeline (Peregrine Architecture) ---
 
             // Fix 1: Guard against undefined property
             const isCompressed = orig?.isCompressed || false;
@@ -483,7 +491,7 @@ export function loadElectronImage(imageId: string) {
                     console.log(`[DIAGNOSTIC] Data Offset=${pixelDataAttr.dataOffset}, BufferSize=${uint8Array.byteLength}, FrameSize=${frameSize}`);
                 }
 
-                // 2. マスク処理の自動化 (Horosロジック)
+                // 2. マスク処理の自動化 (Peregrine logic)
                 let mask = 0xFFFF;
                 if (pixelRepresentation === 0) {
                     mask = (1 << bitsStored) - 1;

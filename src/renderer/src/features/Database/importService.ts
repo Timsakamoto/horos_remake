@@ -1,6 +1,6 @@
 import { AntigravityDatabase } from './db';
 import { parseDicombuffer } from '../../utils/dicomParser';
-import { PACSClient } from '../PACS/pacsClient';
+import { PACSClient, PACSServer } from '../PACS/pacsClient';
 import { updateRecordCounts } from './cleanupService';
 
 export const importFiles = async (
@@ -26,7 +26,7 @@ export const importFiles = async (
         // @ts-ignore
         const userData = await window.electron.getPath('userData');
         // @ts-ignore
-        managedDir = await window.electron.join(userData, 'HorosData', 'DICOM');
+        managedDir = await window.electron.join(userData, 'PeregrineData', 'DICOM');
     }
 
     if (managedDir) {
@@ -170,7 +170,7 @@ const prepareMetadata = (
     const rawInst = String(meta.institutionName || '').trim();
 
     // Determine if this is a "generic" patient ID that shouldn't be used for global grouping
-    // Horos/OsiriX usually separates these if other metadata or sources differ.
+    // Peregrine/OsiriX usually separates these if other metadata or sources differ.
     const isGenericID = /^(0+|anonymous|unknown|none|no_id|unknownid)$/i.test(rawPatientID) || !rawPatientID;
 
     let patientGlobalId: string;
@@ -217,6 +217,8 @@ const prepareMetadata = (
         referringPhysicianName: String(meta.referringPhysicianName || ''),
         ImportDateTime: new Date().toISOString(),
         patientId: patientGlobalId,
+        status: ((meta.isRemote || !filePath) ? 'pending' : 'local') as 'pending' | 'local',
+        isRemote: !!meta.isRemote,
         studyDescriptionNormalized: String(meta.studyDescription || '').toLowerCase()
     };
 
@@ -245,20 +247,28 @@ const prepareMetadata = (
         windowWidth: Number(meta.windowWidth) || 400,
         rescaleIntercept: Number(meta.rescaleIntercept) || 0,
         rescaleSlope: Number(meta.rescaleSlope) || 1,
-        imagePositionPatient: meta.imagePositionPatient ? meta.imagePositionPatient.split(/\\+/).map(Number) : undefined,
-        imageOrientationPatient: meta.imageOrientationPatient ? meta.imageOrientationPatient.split(/\\+/).map(Number) : undefined,
-        pixelSpacing: meta.pixelSpacing ? meta.pixelSpacing.split(/\\+/).map(Number) : undefined,
+        imagePositionPatient: meta.imagePositionPatient ? String(meta.imagePositionPatient).split(/\\+/).map(Number).filter(n => !isNaN(n)) : undefined,
+        imageOrientationPatient: meta.imageOrientationPatient ? String(meta.imageOrientationPatient).split(/\\+/).map(Number).filter(n => !isNaN(n)) : undefined,
+        pixelSpacing: meta.pixelSpacing ? String(meta.pixelSpacing).split(/\\+/).map(Number).filter(n => !isNaN(n)) : undefined,
         sliceThickness: Number(meta.sliceThickness) || undefined
     };
 
-    // --- ★ DEBUG IMPORT LOG ---
-    if (Math.random() < 0.05) { // Log 5% of images to avoid spam but catch samples
-        console.log(`[ImportService] Debug ${image.sopInstanceUID}:`);
-        console.log(`  Meta.IPP (Raw String):`, meta.imagePositionPatient);
-        console.log(`  Image.IPP (Parsed Array):`, image.imagePositionPatient);
-        if (!image.imagePositionPatient || image.imagePositionPatient.some(isNaN)) {
-            console.error(`  [ImportService] CRITICAL: Invalid IPP detected!`);
-        }
+    // --- ★ 32-BIT FLOAT UPGRADE (Peregrine Style) ---
+    // Patch the metadata so that loaders/viewers treat it as 32-bit float if it's a cross-sectional modality
+    const canPatch = ['CT', 'MR', 'PT', 'NM'].includes(series.modality);
+    const intercept = image.rescaleIntercept;
+    const slope = image.rescaleSlope;
+    // Photometric Interpretation check: only for Grayscale
+    const photo = String(meta.photometricInterpretation || '');
+    const willPatch = !photo.includes('RGB') && (canPatch || intercept !== 0 || slope !== 1);
+
+    if (willPatch) {
+        // We lift the raw values to Physical (HU/etc) units at import/metadata level
+        // so that the Viewer can treat them as normalized 32-bit floats.
+        image.windowCenter = (image.windowCenter * slope) + intercept;
+        image.windowWidth = image.windowWidth * slope;
+        image.rescaleIntercept = 0;
+        image.rescaleSlope = 1;
     }
 
     return { patient, study, series, image };
@@ -281,16 +291,16 @@ export const importMetadata = async (
 
 export const importStudyFromPACS = async (
     db: AntigravityDatabase,
-    serverUrl: string,
+    server: PACSServer,
     studyInstanceUID: string,
     onProgress?: (msg: string) => void
 ) => {
-    console.log(`ImportService: Downloading study ${studyInstanceUID} from PACS...`);
-    const client = new PACSClient(serverUrl);
+    console.log(`ImportService: Downloading study ${studyInstanceUID} from PACS ${server.name}...`);
+    const client = new PACSClient(server);
 
     // @ts-ignore
     const userDataPath = await window.electron.getPath('userData');
-    const storageRoot = `${userDataPath}/HorosDatabase`;
+    const storageRoot = `${userDataPath}/PeregrineDatabase`;
 
     try {
         onProgress?.('Fetching Series List...');

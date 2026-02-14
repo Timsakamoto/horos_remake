@@ -18,8 +18,18 @@ import {
     WindowLevelTool,
     PanTool,
     ZoomTool,
+    MagnifyTool,
     SynchronizerManager,
+    LengthTool,
+    AngleTool,
+    RectangleROITool,
+    EllipticalROITool,
+    ProbeTool,
+    ArrowAnnotateTool,
+    BidirectionalTool,
+    CobbAngleTool,
     Enums as csToolsEnums,
+    utilities as csToolsUtils,
 } from '@cornerstonejs/tools';
 import { initCornerstone } from './init';
 import { useDatabase } from '../Database/DatabaseProvider';
@@ -27,17 +37,26 @@ import { useSettings } from '../Settings/SettingsContext';
 import { registerElectronImageLoader, prefetchMetadata } from './electronLoader';
 import { ProjectionMode } from './mprUtils';
 import { ToolMode } from './Toolbar';
+import { VerticalPagingSlider } from './VerticalPagingSlider';
 
 const { ViewportType } = Enums;
 const { MouseBindings } = csToolsEnums;
 
 // Define unique IDs
-const ORTHO_RENDERING_ENGINE_ID = 'horos-engine';
+const ORTHO_RENDERING_ENGINE_ID = 'peregrine-engine';
 const AXIAL_VIEWPORT_ID = 'axial-viewport';
 const SAGITTAL_VIEWPORT_ID = 'sagittal-viewport';
 const CORONAL_VIEWPORT_ID = 'coronal-viewport';
 const ORTHO_TOOL_GROUP_ID = 'ortho-tool-group';
 const ORTHO_VOI_SYNC_ID = 'ortho-voi-sync';
+
+// Global Load Tracker to prevent double-loading during remounts
+const globalLoadTracker = new Map<string, {
+    promise: Promise<boolean>;
+    isLoaded: boolean;
+    maxIndices: { axial: number; sagittal: number; coronal: number };
+    firstImageId: string;
+}>();
 
 interface Props {
     seriesUid: string;
@@ -56,231 +75,417 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
     const { databasePath } = useSettings();
     const [status, setStatus] = useState<string>('');
     const [isVolumeLoaded, setIsVolumeLoaded] = useState(false);
-    const [, setLoadProgress] = useState<number>(0);
+    const [loadProgress, setLoadProgress] = useState<number>(0);
+    const [sliceIndices, setSliceIndices] = useState({ axial: 0, sagittal: 0, coronal: 0 });
+    const [maxIndices, setMaxIndices] = useState({ axial: 0, sagittal: 0, coronal: 0 });
 
     const engineRef = useRef<Types.IRenderingEngine | null>(null);
-    const volumeIdRef = useRef<string | null>(null);
+    const firstImageIdRef = useRef<string | null>(null);
     const loadingRef = useRef<boolean>(false);
     const loadCountRef = useRef(0);
 
     // 1. Initialize Tools
     useEffect(() => {
-        [StackScrollMouseWheelTool, WindowLevelTool, PanTool, ZoomTool].forEach(tool => {
+        [
+            StackScrollMouseWheelTool, WindowLevelTool, PanTool, ZoomTool, MagnifyTool,
+            LengthTool, AngleTool, RectangleROITool, EllipticalROITool, ProbeTool,
+            ArrowAnnotateTool, BidirectionalTool, CobbAngleTool
+        ].forEach(tool => {
             try { addTool(tool); } catch (e) { }
         });
+        // CrosshairsTool is added ONLY when viewports are ready
 
         let toolGroup = ToolGroupManager.getToolGroup(ORTHO_TOOL_GROUP_ID);
         if (!toolGroup) toolGroup = ToolGroupManager.createToolGroup(ORTHO_TOOL_GROUP_ID);
 
         if (toolGroup) {
-            [StackScrollMouseWheelTool, WindowLevelTool, PanTool, ZoomTool].forEach(tool => {
+            [
+                StackScrollMouseWheelTool, WindowLevelTool, PanTool, ZoomTool, MagnifyTool,
+                LengthTool, AngleTool, RectangleROITool, EllipticalROITool, ProbeTool,
+                ArrowAnnotateTool, BidirectionalTool, CobbAngleTool
+            ].forEach(tool => {
                 if (!toolGroup!.hasTool(tool.toolName)) toolGroup!.addTool(tool.toolName);
             });
             toolGroup.setToolActive(StackScrollMouseWheelTool.toolName);
             toolGroup.setToolActive(WindowLevelTool.toolName, { bindings: [{ mouseButton: MouseBindings.Primary }] });
             toolGroup.setToolActive(PanTool.toolName, { bindings: [{ mouseButton: MouseBindings.Auxiliary }] });
             toolGroup.setToolActive(ZoomTool.toolName, { bindings: [{ mouseButton: MouseBindings.Secondary }] });
+
+            toolGroup.setToolPassive(MagnifyTool.toolName);
+            // Crosshairs is handled separately in setupViewports
         }
 
         registerElectronImageLoader();
+        console.log('OrthoView: Component Mounted.');
+
+        // Listen for scroll updates to sync sliders
+        const onScroll = (e: any) => {
+            const { viewportId, sliceIndex } = e.detail;
+            if (viewportId === AXIAL_VIEWPORT_ID) setSliceIndices(prev => ({ ...prev, axial: sliceIndex }));
+            else if (viewportId === SAGITTAL_VIEWPORT_ID) setSliceIndices(prev => ({ ...prev, sagittal: sliceIndex }));
+            else if (viewportId === CORONAL_VIEWPORT_ID) setSliceIndices(prev => ({ ...prev, coronal: sliceIndex }));
+        };
+        const SCROLL_EVENT = 'VOLUME_VIEWPORT_SCROLL_BAR_UPDATED';
+        eventTarget.addEventListener(SCROLL_EVENT, onScroll);
 
         return () => {
+            console.log('OrthoView: Component Unmounting...');
+            eventTarget.removeEventListener(SCROLL_EVENT, onScroll);
             const renderingEngine = getRenderingEngine(ORTHO_RENDERING_ENGINE_ID);
             if (renderingEngine) {
+                const tg = ToolGroupManager.getToolGroup(ORTHO_TOOL_GROUP_ID);
+                const sync = SynchronizerManager.getSynchronizer(ORTHO_VOI_SYNC_ID);
+
                 [AXIAL_VIEWPORT_ID, SAGITTAL_VIEWPORT_ID, CORONAL_VIEWPORT_ID].forEach(vpId => {
-                    if (renderingEngine.getViewport(vpId)) {
-                        try { renderingEngine.disableElement(vpId); } catch (e) { }
-                    }
+                    const vp = renderingEngine.getViewport(vpId);
+                    if (!vp) return;
+
+                    // 1. Remove from Syncer
+                    try { if (sync) sync.remove({ viewportId: vpId, renderingEngineId: ORTHO_RENDERING_ENGINE_ID }); } catch (e) { }
+
+                    // 2. Remove from ToolGroup
+                    try { if (tg) tg.removeViewports(ORTHO_RENDERING_ENGINE_ID, vpId); } catch (e) { }
+
+                    // 3. Disable Element
+                    try { renderingEngine.disableElement(vpId); } catch (e) { }
                 });
             }
         };
     }, []);
 
-    // 2. Tool Activation
+    // 2. Tool Activation & Crosshairs configuration
     useEffect(() => {
         const toolGroup = ToolGroupManager.getToolGroup(ORTHO_TOOL_GROUP_ID);
         if (!toolGroup) return;
 
-        toolGroup.setToolPassive(WindowLevelTool.toolName);
-        toolGroup.setToolPassive(PanTool.toolName);
-        toolGroup.setToolPassive(ZoomTool.toolName);
+        try {
+            // Set ALL tools to passive first for a clean reactive transition
+            const allTools = [
+                WindowLevelTool.toolName, PanTool.toolName, ZoomTool.toolName, MagnifyTool.toolName,
+                LengthTool.toolName, AngleTool.toolName, RectangleROITool.toolName,
+                EllipticalROITool.toolName, ProbeTool.toolName, ArrowAnnotateTool.toolName,
+                BidirectionalTool.toolName, CobbAngleTool.toolName
+            ];
+            allTools.forEach(tn => {
+                if (toolGroup.hasTool(tn)) toolGroup.setToolPassive(tn);
+            });
 
-        const primary = activeTool === 'Pan' ? PanTool.toolName : (activeTool === 'Zoom' ? ZoomTool.toolName : WindowLevelTool.toolName);
-        toolGroup.setToolActive(primary, { bindings: [{ mouseButton: MouseBindings.Primary }] });
+            let primary = '';
+            if (activeTool === 'Pan') primary = PanTool.toolName;
+            else if (activeTool === 'Zoom') primary = ZoomTool.toolName;
+            else if (activeTool === 'WindowLevel') primary = WindowLevelTool.toolName;
+            else if (activeTool === 'Length') primary = LengthTool.toolName;
+            else if (activeTool === 'Angle') primary = AngleTool.toolName;
+            else if (activeTool === 'Rectangle') primary = RectangleROITool.toolName;
+            else if (activeTool === 'Ellipse') primary = EllipticalROITool.toolName;
+            else if (activeTool === 'Probe') primary = ProbeTool.toolName;
+            else if (activeTool === 'Arrow') primary = ArrowAnnotateTool.toolName;
+            else if (activeTool === 'Bidirectional') primary = BidirectionalTool.toolName;
+            else if (activeTool === 'Magnify') primary = MagnifyTool.toolName || 'Magnify';
+            else if (activeTool === 'Text') primary = ArrowAnnotateTool.toolName || 'ArrowAnnotate';
 
-        if (primary !== PanTool.toolName) toolGroup.setToolActive(PanTool.toolName, { bindings: [{ mouseButton: MouseBindings.Auxiliary }] });
-        if (primary !== ZoomTool.toolName) toolGroup.setToolActive(ZoomTool.toolName, { bindings: [{ mouseButton: MouseBindings.Secondary }] });
+            if (primary && toolGroup.hasTool(primary)) {
+                toolGroup.setToolActive(primary, { bindings: [{ mouseButton: MouseBindings.Primary }] });
+            }
+
+            // Secondary and Auxiliary bindings for standard navigation (unless primary is one of them)
+            if (primary !== PanTool.toolName) {
+                toolGroup.setToolActive(PanTool.toolName, { bindings: [{ mouseButton: MouseBindings.Auxiliary }] });
+            }
+            if (primary !== ZoomTool.toolName) {
+                toolGroup.setToolActive(ZoomTool.toolName, { bindings: [{ mouseButton: MouseBindings.Secondary }] });
+            }
+        } catch (e) {
+            console.warn('OrthoView: Tool Activation Error:', e);
+        }
     }, [activeTool]);
 
-    // 3. Load Volume & Render (Pre-load Architecture)
+    const handleSliderChange = (viewportId: string, value: number) => {
+        const re = getRenderingEngine(ORTHO_RENDERING_ENGINE_ID);
+        const vp = re?.getViewport(viewportId) as Types.IVolumeViewport;
+        if (vp) {
+            const current = vp.getSliceIndex();
+            const delta = (value - 1) - current;
+            if (delta !== 0) {
+                csToolsUtils.scroll(vp, { delta });
+            }
+        }
+    };
+
+    /**
+     * Manual Click Synchronization (Alternative to Crosshairs)
+     * When user clicks on a viewport, we find the 3D coordinate and 
+     * move the other two viewports to intersect at that point.
+     */
+    const handleClickSync = (e: React.MouseEvent, viewportId: string) => {
+        // Only trigger if in MPR mode AND Crosshairs tool is active
+        if (activeTool !== 'Crosshairs' || orientation !== 'MPR') return;
+
+        const re = getRenderingEngine(ORTHO_RENDERING_ENGINE_ID);
+        const sourceVp = re?.getViewport(viewportId) as Types.IVolumeViewport;
+        if (!sourceVp) return;
+
+        const canvasPoint: Types.Point2 = [e.nativeEvent.offsetX, e.nativeEvent.offsetY];
+        const worldPoint = sourceVp.canvasToWorld(canvasPoint);
+        if (!worldPoint) return;
+
+        console.log(`OrthoView: Click Sync to World: ${worldPoint}`);
+
+        const otherVpIds = [AXIAL_VIEWPORT_ID, SAGITTAL_VIEWPORT_ID, CORONAL_VIEWPORT_ID].filter(id => id !== viewportId);
+        otherVpIds.forEach(id => {
+            if (!re) return;
+            const targetVp = re.getViewport(id) as Types.IVolumeViewport;
+            if (targetVp && targetVp.getCamera && targetVp.setCamera) {
+                const camera = targetVp.getCamera();
+                if (camera) {
+                    targetVp.setCamera({
+                        ...camera,
+                        focalPoint: [...worldPoint] as Types.Point3
+                    });
+                    targetVp.render();
+                }
+            }
+        });
+    };
+
+    // 3. Volume Loading (Global Tracked)
     useEffect(() => {
         if (!db || !seriesUid) return;
-        if (volumeIdRef.current === seriesUid && isVolumeLoaded) return;
 
         const volumeId = `cornerstoneStreamingImageVolume:${seriesUid}`;
-        volumeIdRef.current = seriesUid;
         const currentLoadId = ++loadCountRef.current;
 
-        const loadVolume = async () => {
-            if (loadingRef.current) return;
-            loadingRef.current = true;
-
-            try {
-                setStatus('Loading Series Metadata...');
-                setLoadProgress(0);
-
-                const images = await (db as any).T_FilePath.find({
-                    selector: { seriesInstanceUID: seriesUid },
-                    sort: [{ instanceNumber: 'asc' }]
-                }).exec();
-
-                if (images.length === 0) {
-                    setStatus('No images found.');
+        const performLoad = async () => {
+            // Check global tracker
+            const existing = globalLoadTracker.get(seriesUid);
+            if (existing) {
+                console.log(`OrthoView [${seriesUid}]: Found existing load record.`);
+                if (existing.isLoaded) {
+                    setMaxIndices(existing.maxIndices);
+                    firstImageIdRef.current = existing.firstImageId;
+                    setIsVolumeLoaded(true);
                     return;
                 }
+                setStatus('Loading in progress elsewhere...');
+                await existing.promise;
+                if (globalLoadTracker.get(seriesUid)?.isLoaded) {
+                    const updated = globalLoadTracker.get(seriesUid)!;
+                    setMaxIndices(updated.maxIndices);
+                    firstImageIdRef.current = updated.firstImageId;
+                    setIsVolumeLoaded(true);
+                    setStatus('');
+                }
+                return;
+            }
 
-                const imageIds = images.map((img: any) => {
-                    let p = img.filePath;
-                    if (!(p.startsWith('/') || /^[a-zA-Z]:/.test(p)) && databasePath) {
-                        const sep = databasePath.includes('\\') ? '\\' : '/';
-                        p = `${databasePath.replace(/[\\/]$/, '')}${sep}${p.replace(/^[\\/]/, '')}`;
+            // Create new load promise
+            const loadPromise = (async () => {
+                if (loadingRef.current) return false;
+                loadingRef.current = true;
+                setIsVolumeLoaded(false);
+
+                try {
+                    setStatus('Loading Series Metadata...');
+                    const images = await (db as any).T_FilePath.find({
+                        selector: { seriesInstanceUID: seriesUid },
+                        sort: [{ instanceNumber: 'asc' }]
+                    }).exec();
+
+                    if (images.length === 0) {
+                        setStatus('No images found.');
+                        return false;
                     }
-                    return `electronfile:${p}?forVolume=true`;
-                });
 
-                await initCornerstone();
-                await prefetchMetadata(imageIds);
+                    const imageIds = images.map((img: any) => {
+                        let p = img.filePath;
+                        if (!(p.startsWith('/') || /^[a-zA-Z]:/.test(p)) && databasePath) {
+                            const sep = databasePath.includes('\\') ? '\\' : '/';
+                            p = `${databasePath.replace(/[\\/]$/, '')}${sep}${p.replace(/^[\\/]/, '')}`;
+                        }
+                        return `electronfile:${p}?forVolume=true`;
+                    });
 
-                // --- ★ Step A: Pre-load all slices into cache (User Suggestion) ---
-                setStatus('Loading Pixels...');
-                const CHUNK_SIZE = 15;
-                let loadedCount = 0;
-                for (let i = 0; i < imageIds.length; i += CHUNK_SIZE) {
-                    const chunk = imageIds.slice(i, i + CHUNK_SIZE);
-                    await Promise.all(chunk.map(id => imageLoader.loadAndCacheImage(id)));
-                    loadedCount += chunk.length;
-                    const progress = Math.round((loadedCount / imageIds.length) * 100);
-                    setLoadProgress(progress);
+                    await initCornerstone();
+                    await prefetchMetadata(imageIds);
+
+                    setStatus('Loading Pixels...');
+                    const CHUNK_SIZE = 50;
+                    let loadedCount = 0;
+                    for (let i = 0; i < imageIds.length; i += CHUNK_SIZE) {
+                        const chunk = imageIds.slice(i, i + CHUNK_SIZE);
+                        console.log(`OrthoView [${seriesUid}]: Loading Chunk ${i}...`);
+                        await Promise.all(chunk.map((id: string) => imageLoader.loadAndCacheImage(id)));
+                        loadedCount += chunk.length;
+                        setLoadProgress(Math.round((loadedCount / imageIds.length) * 100));
+                    }
+
+                    setStatus('Building Volume...');
+                    if (cache.getVolume(volumeId)) cache.removeVolumeLoadObject(volumeId);
+
+                    // Sort by slice location for correct volume geometry
+                    const sorted = [...imageIds].sort((a, b) => (metaData.get('imagePlaneModule', a)?.sliceLocation ?? 0) - (metaData.get('imagePlaneModule', b)?.sliceLocation ?? 0));
+                    const vol = await volumeLoader.createAndCacheVolume(volumeId, { imageIds: sorted });
+                    vol.load();
+
+                    const dims = vol.dimensions;
+                    const indices = { axial: dims[2], sagittal: dims[0], coronal: dims[1] };
+                    const firstId = sorted[0];
+
+                    globalLoadTracker.set(seriesUid, {
+                        promise: Promise.resolve(true),
+                        isLoaded: true,
+                        maxIndices: indices,
+                        firstImageId: firstId
+                    });
+
                     if (currentLoadId === loadCountRef.current) {
-                        setStatus(`Processing: ${progress}% (${loadedCount}/${imageIds.length})`);
+                        setMaxIndices(indices);
+                        firstImageIdRef.current = firstId;
+                        setIsVolumeLoaded(true);
+                        setStatus('');
+                    }
+                    return true;
+                } catch (e) {
+                    console.error('Load Error:', e);
+                    setStatus('Load Failed');
+                    globalLoadTracker.delete(seriesUid);
+                    return false;
+                } finally {
+                    loadingRef.current = false;
+                }
+            })();
+
+            globalLoadTracker.set(seriesUid, {
+                promise: loadPromise,
+                isLoaded: false,
+                maxIndices: { axial: 0, sagittal: 0, coronal: 0 },
+                firstImageId: ''
+            });
+            await loadPromise;
+        };
+
+        performLoad();
+    }, [db, seriesUid, databasePath]);
+
+    // 4. Viewport Setup & Rendering (Depends on orientation and isVolumeLoaded)
+    useEffect(() => {
+        if (!isVolumeLoaded || !seriesUid) return;
+
+        const volumeId = `cornerstoneStreamingImageVolume:${seriesUid}`;
+        const re = getRenderingEngine(ORTHO_RENDERING_ENGINE_ID) || new RenderingEngine(ORTHO_RENDERING_ENGINE_ID);
+        engineRef.current = re;
+
+        const setupViewports = async () => {
+            const vps = [];
+            const activeIds: string[] = [];
+
+            if (orientation === 'MPR') {
+                if (!elementAxialRef.current || !elementSagittalRef.current || !elementCoronalRef.current) return;
+                vps.push(
+                    { viewportId: AXIAL_VIEWPORT_ID, type: ViewportType.ORTHOGRAPHIC, element: elementAxialRef.current, defaultOptions: { orientation: Enums.OrientationAxis.AXIAL, background: [0, 0, 0] as Types.Point3 } },
+                    { viewportId: SAGITTAL_VIEWPORT_ID, type: ViewportType.ORTHOGRAPHIC, element: elementSagittalRef.current, defaultOptions: { orientation: Enums.OrientationAxis.SAGITTAL, background: [0, 0, 0] as Types.Point3 } },
+                    { viewportId: CORONAL_VIEWPORT_ID, type: ViewportType.ORTHOGRAPHIC, element: elementCoronalRef.current, defaultOptions: { orientation: Enums.OrientationAxis.CORONAL, background: [0, 0, 0] as Types.Point3 } }
+                );
+                activeIds.push(AXIAL_VIEWPORT_ID, SAGITTAL_VIEWPORT_ID, CORONAL_VIEWPORT_ID);
+            } else {
+                const el = orientation === 'Axial' ? elementAxialRef.current : (orientation === 'Sagittal' ? elementSagittalRef.current : elementCoronalRef.current);
+                const id = orientation === 'Axial' ? AXIAL_VIEWPORT_ID : (orientation === 'Sagittal' ? SAGITTAL_VIEWPORT_ID : CORONAL_VIEWPORT_ID);
+                const axis = orientation === 'Axial' ? Enums.OrientationAxis.AXIAL : (orientation === 'Sagittal' ? Enums.OrientationAxis.SAGITTAL : Enums.OrientationAxis.CORONAL);
+                if (el) {
+                    vps.push({ viewportId: id, type: ViewportType.ORTHOGRAPHIC, element: el, defaultOptions: { orientation: axis, background: [0, 0, 0] as Types.Point3 } });
+                    activeIds.push(id);
+                }
+            }
+
+            // Sync check: Add viewports to toolgroup and syncer
+            const tg = ToolGroupManager.getToolGroup(ORTHO_TOOL_GROUP_ID);
+
+            // Clean up previous viewports if they are not in the current active list
+            const prevVpIds = [AXIAL_VIEWPORT_ID, SAGITTAL_VIEWPORT_ID, CORONAL_VIEWPORT_ID];
+            prevVpIds.forEach(id => {
+                if (!activeIds.includes(id)) {
+                    const vp = re.getViewport(id);
+                    if (vp) {
+                        // 1. Remove from Synchronizer
+                        const currentSync = SynchronizerManager.getSynchronizer(ORTHO_VOI_SYNC_ID);
+                        try { currentSync?.remove({ viewportId: id, renderingEngineId: ORTHO_RENDERING_ENGINE_ID }); } catch (e) { }
+
+                        // 2. Remove from ToolGroup
+                        try { tg?.removeViewports(ORTHO_RENDERING_ENGINE_ID, id); } catch (e) { }
+
+                        // 3. Disable Element
+                        try { re.disableElement(id); } catch (e) { }
                     }
                 }
+            });
 
-                // --- Step B: Build Volume from cached pixels ---
-                setStatus('Building 3D Volume...');
-                let re = getRenderingEngine(ORTHO_RENDERING_ENGINE_ID) || new RenderingEngine(ORTHO_RENDERING_ENGINE_ID);
-                engineRef.current = re;
-
-                const vps = [];
-                const activeIds = [];
-
-                if (orientation === 'MPR') {
-                    if (!elementAxialRef.current || !elementSagittalRef.current || !elementCoronalRef.current) return;
-                    vps.push(
-                        { viewportId: AXIAL_VIEWPORT_ID, type: ViewportType.ORTHOGRAPHIC, element: elementAxialRef.current, defaultOptions: { orientation: Enums.OrientationAxis.AXIAL, background: [0, 0, 0] as Types.Point3 } },
-                        { viewportId: SAGITTAL_VIEWPORT_ID, type: ViewportType.ORTHOGRAPHIC, element: elementSagittalRef.current, defaultOptions: { orientation: Enums.OrientationAxis.SAGITTAL, background: [0, 0, 0] as Types.Point3 } },
-                        { viewportId: CORONAL_VIEWPORT_ID, type: ViewportType.ORTHOGRAPHIC, element: elementCoronalRef.current, defaultOptions: { orientation: Enums.OrientationAxis.CORONAL, background: [0, 0, 0] as Types.Point3 } }
-                    );
-                    activeIds.push(AXIAL_VIEWPORT_ID, SAGITTAL_VIEWPORT_ID, CORONAL_VIEWPORT_ID);
-                } else {
-                    const el = orientation === 'Axial' ? elementAxialRef.current : (orientation === 'Sagittal' ? elementSagittalRef.current : elementCoronalRef.current);
-                    const id = orientation === 'Axial' ? AXIAL_VIEWPORT_ID : (orientation === 'Sagittal' ? SAGITTAL_VIEWPORT_ID : CORONAL_VIEWPORT_ID);
-                    const axis = orientation === 'Axial' ? Enums.OrientationAxis.AXIAL : (orientation === 'Sagittal' ? Enums.OrientationAxis.SAGITTAL : Enums.OrientationAxis.CORONAL);
-                    if (el) {
-                        vps.push({ viewportId: id, type: ViewportType.ORTHOGRAPHIC, element: el, defaultOptions: { orientation: axis, background: [0, 0, 0] as Types.Point3 } });
-                        activeIds.push(id);
-                    }
+            // Enable/Update active viewports
+            vps.forEach(v => {
+                const ex = re.getViewport(v.viewportId);
+                if (!ex || ex.getCanvas()?.parentElement !== v.element) {
+                    if (ex) re.disableElement(v.viewportId);
+                    re.enableElement(v);
                 }
+                tg?.addViewport(v.viewportId, ORTHO_RENDERING_ENGINE_ID);
+                console.log(`OrthoView: Enabled & Added Viewport: ${v.viewportId}`);
+            });
 
-                vps.forEach(v => {
-                    const ex = re.getViewport(v.viewportId);
-                    if (!ex || ex.getCanvas()?.parentElement !== v.element) {
-                        if (ex) re.disableElement(v.viewportId);
-                        re.enableElement(v);
-                    }
-                });
+            const sync = SynchronizerManager.getSynchronizer(ORTHO_VOI_SYNC_ID) || SynchronizerManager.createSynchronizer(ORTHO_VOI_SYNC_ID, Enums.Events.VOI_MODIFIED, (_s, sV, tV) => {
+                if (!re) return;
+                const sViewport = re.getViewport(sV.viewportId) as Types.IVolumeViewport;
+                const tViewport = re.getViewport(tV.viewportId) as Types.IVolumeViewport;
 
-                const tg = ToolGroupManager.getToolGroup(ORTHO_TOOL_GROUP_ID);
-                activeIds.forEach(id => tg?.addViewport(id, ORTHO_RENDERING_ENGINE_ID));
+                // Add even more guards for the properties and viewport existence
+                if (!sViewport || !tViewport || typeof sViewport.getProperties !== 'function' || typeof tViewport.setProperties !== 'function') return;
 
-                let sync = SynchronizerManager.getSynchronizer(ORTHO_VOI_SYNC_ID) || SynchronizerManager.createSynchronizer(ORTHO_VOI_SYNC_ID, Enums.Events.VOI_MODIFIED, (_s, sV, tV) => {
-                    const sViewport = re.getViewport(sV.viewportId) as Types.IVolumeViewport;
-                    const tViewport = re.getViewport(tV.viewportId) as Types.IVolumeViewport;
-                    if (!sViewport || !tViewport || !sViewport.getProperties) return;
+                try {
                     const p = sViewport.getProperties();
-                    if (p.voiRange) {
-                        tViewport.setProperties({ voiRange: p.voiRange });
+                    if (p && p.voiRange) {
+                        // Deep clone the range to avoid reference issues
+                        const safeRange = { lower: p.voiRange.lower, upper: p.voiRange.upper };
+                        tViewport.setProperties({ voiRange: safeRange });
                         tViewport.render();
                     }
-                });
-                activeIds.forEach(id => sync.add({ viewportId: id, renderingEngineId: ORTHO_RENDERING_ENGINE_ID }));
-
-                if (cache.getVolume(volumeId)) {
-                    cache.removeVolumeLoadObject(volumeId);
+                } catch (err) {
+                    // Log internally but don't crash the event loop
                 }
+            });
+            activeIds.forEach(id => {
+                try { sync.add({ viewportId: id, renderingEngineId: ORTHO_RENDERING_ENGINE_ID }); } catch (e) { }
+            });
 
-                const sorted = [...imageIds].sort((a, b) => (metaData.get('imagePlaneModule', a)?.sliceLocation ?? 0) - (metaData.get('imagePlaneModule', b)?.sliceLocation ?? 0));
+            await setVolumesForViewports(re, [{ volumeId }], activeIds);
 
-                const vol = await volumeLoader.createAndCacheVolume(volumeId, { imageIds: sorted });
-
-                const onImg = (e: any) => {
-                    if (e.detail.volumeId === volumeId) {
-                        const status = vol.loadStatus;
-                        if (!status) return;
-                        const p = Math.round((status.framesLoaded / status.numFrames) * 100);
-                        if (currentLoadId === loadCountRef.current) {
-                            setStatus(`Finalizing: ${p}%`);
-                        }
-                    }
-                };
-                eventTarget.addEventListener(Enums.Events.IMAGE_LOADED, onImg);
-
-                vol.load();
-
-                await setVolumesForViewports(re, [{ volumeId }], activeIds);
-
-                const voi = metaData.get('voiLutModule', imageIds[0]);
-                let c = 40, w = 400;
-                if (voi && voi.windowCenter != null) {
-                    c = Number(Array.isArray(voi.windowCenter) ? voi.windowCenter[0] : voi.windowCenter);
-                    w = Number(Array.isArray(voi.windowWidth) ? voi.windowWidth[0] : voi.windowWidth);
-                }
-
-                activeIds.forEach(id => {
-                    const vp = re.getViewport(id) as Types.IVolumeViewport;
-                    if (vp) {
-                        vp.setProperties({ voiRange: { lower: c - w / 2, upper: c + w / 2 } });
-                        if (vp.resetCamera) vp.resetCamera();
-                        vp.render();
-                    }
-                });
-                re.render();
-
-                setStatus('');
-                setIsVolumeLoaded(true);
-
-                // --- Step C: Diagnostic (Should be 1.0 immediately) ---
-                setTimeout(() => {
-                    const sData = vol.getScalarData();
-                    if (!sData) return;
-                    let nonZero = 0;
-                    for (let i = 0; i < sData.length; i += 100) if (sData[i] !== 0) nonZero++;
-                    const ratio = nonZero / (sData.length / 100);
-                    console.log(`[OrthoView] Diagnostic (Pre-load Phase): NonZeroRatio=${ratio.toFixed(4)}`);
-                }, 2000);
-
-                return () => eventTarget.removeEventListener(Enums.Events.IMAGE_LOADED, onImg);
-            } catch (e) {
-                console.error(e);
-                if (currentLoadId === loadCountRef.current) { setStatus('Load Failed'); setIsVolumeLoaded(false); }
-            } finally {
-                if (currentLoadId === loadCountRef.current) loadingRef.current = false;
+            // Set Initial VOI from first cached image metadata
+            const firstId = firstImageIdRef.current;
+            const voi = firstId ? metaData.get('voiLutModule', firstId) : null;
+            let c = 40, w = 400;
+            if (voi && voi.windowCenter != null) {
+                c = Number(Array.isArray(voi.windowCenter) ? voi.windowCenter[0] : voi.windowCenter);
+                w = Number(Array.isArray(voi.windowWidth) ? voi.windowWidth[0] : voi.windowWidth);
             }
-        };
-        loadVolume();
-    }, [db, seriesUid, databasePath, orientation]);
 
-    // 4. Update Slab/MIP
+            activeIds.forEach(id => {
+                const vp = re.getViewport(id) as Types.IVolumeViewport;
+                if (vp) {
+                    vp.setProperties({ voiRange: { lower: c - w / 2, upper: c + w / 2 } });
+                    if (vp.resetCamera) vp.resetCamera();
+                    console.log(`OrthoView [${id}]: Applied VOI: WC=${c}, WW=${w}`);
+                    vp.render();
+                }
+            });
+
+            // Optional: Manual Sync (as fallback for Crosshairs)
+            // We use the Synchronizer for VOI, but for position we have handleClickSync
+
+            re.render();
+        };
+
+        setupViewports();
+
+    }, [isVolumeLoaded, orientation, seriesUid]);
+
+    // 5. Update Slab/MIP
     useEffect(() => {
         const re = getRenderingEngine(ORTHO_RENDERING_ENGINE_ID);
         if (!re) return;
@@ -301,28 +506,39 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
         if (orientation === 'MPR') {
             return (
                 <div className="grid grid-cols-3 w-full h-full gap-1 p-1 bg-black">
-                    <div className="relative border border-blue-500/30 overflow-hidden group">
-                        <div ref={elementAxialRef} className="w-full h-full" onContextMenu={e => e.preventDefault()} />
-                        <div className="absolute top-2 left-2 text-blue-500 font-black text-xs opacity-50 group-hover:opacity-100 transition-opacity uppercase tracking-widest">Axial</div>
+                    <div className="relative border border-blue-500/30 overflow-hidden group cursor-crosshair">
+                        <div ref={elementAxialRef} className="w-full h-full" onContextMenu={e => e.preventDefault()} onClick={e => handleClickSync(e, AXIAL_VIEWPORT_ID)} />
+                        <div className="absolute top-2 left-2 text-blue-500 font-black text-xs opacity-50 group-hover:opacity-100 transition-opacity uppercase tracking-widest pointer-events-none">Axial</div>
                     </div>
-                    <div className="relative border border-yellow-500/30 overflow-hidden group">
-                        <div ref={elementSagittalRef} className="w-full h-full" onContextMenu={e => e.preventDefault()} />
-                        <div className="absolute top-2 left-2 text-yellow-500 font-black text-xs opacity-50 group-hover:opacity-100 transition-opacity uppercase tracking-widest">Sagittal</div>
+                    <div className="relative border border-yellow-500/30 overflow-hidden group cursor-crosshair">
+                        <div ref={elementSagittalRef} className="w-full h-full" onContextMenu={e => e.preventDefault()} onClick={e => handleClickSync(e, SAGITTAL_VIEWPORT_ID)} />
+                        <div className="absolute top-2 left-2 text-yellow-500 font-black text-xs opacity-50 group-hover:opacity-100 transition-opacity uppercase tracking-widest pointer-events-none">Sagittal</div>
                     </div>
-                    <div className="relative border border-green-500/30 overflow-hidden group">
-                        <div ref={elementCoronalRef} className="w-full h-full" onContextMenu={e => e.preventDefault()} />
-                        <div className="absolute top-2 left-2 text-green-500 font-black text-xs opacity-50 group-hover:opacity-100 transition-opacity uppercase tracking-widest">Coronal</div>
+                    <div className="relative border border-green-500/30 overflow-hidden group cursor-crosshair">
+                        <div ref={elementCoronalRef} className="w-full h-full" onContextMenu={e => e.preventDefault()} onClick={e => handleClickSync(e, CORONAL_VIEWPORT_ID)} />
+                        <div className="absolute top-2 left-2 text-green-500 font-black text-xs opacity-50 group-hover:opacity-100 transition-opacity uppercase tracking-widest pointer-events-none">Coronal</div>
                     </div>
                 </div>
             );
         }
         const color = orientation === 'Axial' ? 'blue' : (orientation === 'Sagittal' ? 'yellow' : 'green');
         const rCurrent = orientation === 'Axial' ? elementAxialRef : (orientation === 'Sagittal' ? elementSagittalRef : elementCoronalRef);
+        const vpId = orientation === 'Axial' ? AXIAL_VIEWPORT_ID : (orientation === 'Sagittal' ? SAGITTAL_VIEWPORT_ID : CORONAL_VIEWPORT_ID);
+        const key = orientation.toLowerCase() as 'axial' | 'sagittal' | 'coronal';
+
         return (
             <div className="w-full h-full p-1 bg-black">
                 <div className={`relative w-full h-full border border-${color}-500/30 overflow-hidden group`}>
                     <div ref={rCurrent} className="w-full h-full" onContextMenu={e => e.preventDefault()} />
                     <div className={`absolute top-2 left-2 text-${color}-500 font-black text-xs opacity-50 group-hover:opacity-100 transition-opacity uppercase tracking-widest`}>{orientation}</div>
+
+                    {/* Vertical Paging Slider for Single Orientation Views */}
+                    <VerticalPagingSlider
+                        min={1}
+                        max={maxIndices[key]}
+                        value={sliceIndices[key] + 1}
+                        onChange={(v) => handleSliderChange(vpId, v)}
+                    />
                 </div>
             </div>
         );
@@ -332,8 +548,9 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
         <div className="w-full h-full relative bg-black">
             {status && (
                 <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 text-white pointer-events-none">
-                    <div className="w-12 h-12 border-4 border-horos-accent border-t-transparent rounded-full animate-spin mb-4" />
-                    <div className="text-lg font-bold tracking-widest animate-pulse uppercase">{status}</div>
+                    <div className="w-12 h-12 border-4 border-peregrine-accent border-t-transparent rounded-full animate-spin mb-4" />
+                    <div className="text-2xl font-black tracking-widest uppercase mb-1">{status}</div>
+                    {loadProgress > 0 && <div className="text-sm opacity-50">{loadProgress}% COMPLETE</div>}
                 </div>
             )}
             {!seriesUid && <div className="absolute inset-0 flex items-center justify-center p-8 text-white/20 pointer-events-none z-50">Select a series</div>}

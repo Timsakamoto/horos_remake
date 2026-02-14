@@ -37,13 +37,13 @@ export const VerticalPagingSlider = ({ min, max, value, onChange }: Props) => {
             >
                 {/* Active Range (Optional, maybe just a path) */}
                 <div
-                    className="absolute top-0 left-0 right-0 bg-horos-accent/40 rounded-full"
+                    className="absolute top-0 left-0 right-0 bg-peregrine-accent/40 rounded-full"
                     style={{ height: `${percentage}%` }}
                 />
 
                 {/* Handle */}
                 <div
-                    className="absolute left-1/2 -translate-x-1/2 w-4 h-4 bg-white rounded-full shadow-lg border-2 border-horos-accent flex items-center justify-center cursor-grab active:cursor-grabbing hover:scale-110 transition-transform"
+                    className="absolute left-1/2 -translate-x-1/2 w-4 h-4 bg-white rounded-full shadow-lg border-2 border-peregrine-accent flex items-center justify-center cursor-grab active:cursor-grabbing hover:scale-110 transition-transform"
                     style={{ top: `${percentage}%`, marginTop: '-8px' }}
                     draggable
                     onDrag={(e) => {
@@ -55,7 +55,7 @@ export const VerticalPagingSlider = ({ min, max, value, onChange }: Props) => {
                         if (newValue !== value) onChange(newValue);
                     }}
                 >
-                    <div className="w-1.5 h-1.5 bg-horos-accent rounded-full animate-pulse" />
+                    <div className="w-1.5 h-1.5 bg-peregrine-accent rounded-full animate-pulse" />
                 </div>
             </div>
 

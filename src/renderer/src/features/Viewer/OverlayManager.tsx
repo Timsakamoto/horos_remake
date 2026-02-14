@@ -29,7 +29,7 @@ export const OverlayManager: React.FC<OverlayProps> = ({ metadata }) => {
         <div className="absolute inset-0 pointer-events-none select-none text-[11px] font-medium text-white/90 font-mono shadow-sm">
             {/* Top Left: Patient / Study Info */}
             <div className="absolute top-4 left-4 flex flex-col gap-0.5">
-                <div className="text-horos-accent font-black tracking-wider uppercase text-[12px]">{metadata.patientName || 'Anonymous'}</div>
+                <div className="text-peregrine-accent font-black tracking-wider uppercase text-[12px]">{metadata.patientName || 'Anonymous'}</div>
                 <div>{metadata.patientID || 'Unknown ID'}</div>
                 <div>{metadata.patientBirthDate || ''} {metadata.patientSex || ''}</div>
                 <div className="mt-1 opacity-70">{metadata.institutionName || ''}</div>
@@ -40,7 +40,7 @@ export const OverlayManager: React.FC<OverlayProps> = ({ metadata }) => {
                 <div className="text-gray-300">{metadata.studyDescription || ''}</div>
                 <div>{metadata.studyDate || ''}</div>
                 <div>{metadata.studyTime || ''}</div>
-                <div className="mt-1 text-horos-accent/80">{metadata.modality || ''} - {metadata.seriesDescription || ''}</div>
+                <div className="mt-1 text-peregrine-accent/80">{metadata.modality || ''} - {metadata.seriesDescription || ''}</div>
             </div>
 
             {/* Bottom Left: Imaging Parameters */}

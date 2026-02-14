@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useDatabase } from '../Database/DatabaseProvider';
+import { usePACS } from '../PACS/PACSProvider';
 import { Viewport } from './Viewport';
 
 interface SeriesSummary {
@@ -23,6 +24,10 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
     const { db, lastDeletionTime } = useDatabase();
     const [seriesList, setSeriesList] = useState<SeriesSummary[]>([]);
     const [cols, setCols] = useState(defaultCols);
+    const { servers, sendToPacs } = usePACS();
+    const [contextMenu, setContextMenu] = useState<{ x: number, y: number, seriesUid: string } | null>(null);
+    const [showSendModal, setShowSendModal] = useState(false);
+    const [selectedSeriesForSend, setSelectedSeriesForSend] = useState<string | null>(null);
 
     useEffect(() => {
         if (!db || !patientId) {
@@ -34,23 +39,32 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
         }
 
         const fetchSeries = async () => {
-            // Fetch ALL studies for this patient, sorted by date descending
-            const studies = await db.T_Study.find({
-                selector: { patientId },
-                sort: [{ studyDate: 'desc' }]
-            }).exec();
+            let targetStudyUids: string[] = [];
+            let studies: any[] = [];
 
-            if (studies.length === 0) {
+            if (studyUid) {
+                // If studyUid is provided, only show series for THIS study
+                targetStudyUids = [studyUid];
+                const s = await db.T_Study.findOne({ selector: { studyInstanceUID: studyUid } }).exec();
+                if (s) studies = [s];
+            } else {
+                // Fallback: Fetch ALL studies for this patient
+                studies = await db.T_Study.find({
+                    selector: { patientId },
+                    sort: [{ studyDate: 'desc' }]
+                }).exec();
+                targetStudyUids = studies.map(s => s.studyInstanceUID);
+            }
+
+            if (targetStudyUids.length === 0) {
                 setSeriesList([]);
                 onSelect(null);
                 return;
             }
 
-            const targetStudies = studies.map(s => s.studyInstanceUID);
-
             const allSeries: SeriesSummary[] = [];
 
-            for (const sUid of targetStudies) {
+            for (const sUid of targetStudyUids) {
                 const seriesDocs = await db.T_Subseries.find({
                     selector: { studyInstanceUID: sUid },
                     sort: [{ seriesNumber: 'asc' }]
@@ -61,7 +75,6 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                         selector: { seriesInstanceUID: s.seriesInstanceUID }
                     }).exec();
 
-                    // Fetch the middle slice instead of the first slice for a more representative thumbnail
                     const middleIndex = Math.floor(count / 2);
                     const middleImageDocs = await db.T_FilePath.find({
                         selector: { seriesInstanceUID: s.seriesInstanceUID },
@@ -71,9 +84,11 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                     }).exec();
                     const middleImage = middleImageDocs[0];
 
+                    const parentStudy = studies.find(sd => sd.studyInstanceUID === s.studyInstanceUID);
+
                     allSeries.push({
                         seriesInstanceUID: s.seriesInstanceUID,
-                        seriesDescription: `${studies.find(sd => sd.studyInstanceUID === s.studyInstanceUID)?.studyDate || ''} - ${s.seriesDescription}`,
+                        seriesDescription: `${parentStudy?.studyDate || ''} - ${s.seriesDescription}`,
                         modality: s.modality,
                         seriesNumber: String(s.seriesNumber),
                         numImages: count,
@@ -103,29 +118,29 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
     return (
         <div className="w-full h-full bg-[#0a0a0b] flex flex-col select-none border-r border-white/5">
             {/* Header - Perfectionist Alignment */}
-            <div className="px-5 py-3 border-b border-white/5 flex items-center justify-between">
+            <div className="px-5 py-3.5 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
                 <div className="flex flex-col gap-0.5">
-                    <span className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Series Browser</span>
-                    <span className="text-[9px] font-bold text-gray-600 tabular-nums">{seriesList.length} Series Loaded</span>
+                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] opacity-80">Series Browser</span>
+                    <span className="text-[9px] font-bold text-gray-600 tabular-nums uppercase tracking-tighter">{seriesList.length} Items Available</span>
                 </div>
 
-                {/* Size Controls */}
-                <div className="flex items-center gap-3 bg-white/5 px-3 py-1.5 rounded-full border border-white/5">
-                    <span className="text-[8px] font-black text-gray-400 uppercase tracking-tighter">Size</span>
+                {/* Size Controls - Integrated Glassmorphism */}
+                <div className="flex items-center gap-2.5 bg-black/40 px-3 py-1.5 rounded-full border border-white/10">
+                    <span className="text-[8px] font-black text-gray-500 uppercase tracking-tighter">Cols</span>
                     <input
                         type="range"
                         min="2"
                         max="7"
                         value={8 - cols}
                         onChange={(e) => setCols(8 - parseInt(e.target.value))}
-                        className="w-16 h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-horos-accent"
+                        className="w-12 h-0.5 bg-white/10 rounded-full appearance-none cursor-pointer accent-peregrine-accent"
                     />
-                    <span className="text-[9px] font-black text-horos-accent w-3 text-center">{cols}</span>
+                    <span className="text-[9px] font-black text-peregrine-accent w-2 text-center">{cols}</span>
                 </div>
             </div>
 
             <div
-                className="flex-1 px-3 py-4 grid gap-3 items-start overflow-y-auto"
+                className="flex-1 px-3.5 py-5 grid gap-3.5 items-start overflow-y-auto custom-scrollbar"
                 style={{
                     gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`
                 }}
@@ -138,6 +153,10 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                             e.dataTransfer.setData('seriesUid', series.seriesInstanceUID);
                         }}
                         onClick={() => onSelect(series.seriesInstanceUID)}
+                        onContextMenu={(e) => {
+                            e.preventDefault();
+                            setContextMenu({ x: e.clientX, y: e.clientY, seriesUid: series.seriesInstanceUID });
+                        }}
                         className={`
                             group cursor-pointer rounded-xl p-1.5 transition-all duration-300 relative flex flex-col items-center
                             ${selectedSeriesUid === series.seriesInstanceUID
@@ -148,20 +167,20 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                     >
                         {/* Selected Indicator - Glow Effect */}
                         {selectedSeriesUid === series.seriesInstanceUID && (
-                            <div className="absolute inset-0 bg-horos-accent/5 rounded-xl blur-lg animate-pulse" />
+                            <div className="absolute inset-0 bg-peregrine-accent/5 rounded-xl blur-lg animate-pulse" />
                         )}
 
                         <div className={`
                             w-full aspect-square rounded-lg mb-1.5 flex flex-col items-center justify-center relative overflow-hidden transition-all duration-300 border
                             ${selectedSeriesUid === series.seriesInstanceUID
-                                ? 'bg-black border-horos-accent shadow-[0_4px_20px_rgba(37,99,235,0.3)] scale-[1.02]'
+                                ? 'bg-black border-peregrine-accent shadow-[0_4px_20px_rgba(37,99,235,0.3)] scale-[1.02]'
                                 : 'bg-black/80 border-white/5 group-hover:border-white/20'
                             }
                         `}>
                             {series.thumbnailImageId ? (
                                 <Viewport
                                     viewportId={`thumb-${series.seriesInstanceUID}`}
-                                    renderingEngineId="horos-engine"
+                                    renderingEngineId="peregrine-engine"
                                     seriesUid={series.seriesInstanceUID}
                                     initialImageId={series.thumbnailImageId}
                                     isThumbnail={true}
@@ -173,9 +192,9 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                                 </div>
                             )}
 
-                            {/* Label Overlay - Horos Style Glassmorphism */}
+                            {/* Label Overlay - Peregrine Style Glassmorphism */}
                             <div className="absolute bottom-0 left-0 right-0 bg-black/70 backdrop-blur-md px-1.5 py-1.5 flex justify-between items-center z-10 border-t border-white/10">
-                                <span className={`text-[${cols > 4 ? '7px' : '9px'}] font-black uppercase tracking-tighter ${selectedSeriesUid === series.seriesInstanceUID ? 'text-horos-accent' : 'text-white/90'}`}>{series.modality}</span>
+                                <span className={`text-[${cols > 4 ? '7px' : '9px'}] font-black uppercase tracking-tighter ${selectedSeriesUid === series.seriesInstanceUID ? 'text-peregrine-accent' : 'text-white/90'}`}>{series.modality}</span>
                                 <span className={`text-[${cols > 4 ? '7px' : '9px'}] font-bold text-white/50`}>{series.numImages} Items</span>
                             </div>
                         </div>
@@ -192,7 +211,7 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                                 </div>
                                 <div className="flex justify-center items-center gap-1 mt-0.5">
                                     <span className={`text-[${cols > 3 ? '7px' : '9px'}] font-bold tracking-widest
-                                        ${selectedSeriesUid === series.seriesInstanceUID ? 'text-horos-accent' : 'text-gray-600'}
+                                        ${selectedSeriesUid === series.seriesInstanceUID ? 'text-peregrine-accent' : 'text-gray-600'}
                                     `}>
                                         S. {series.seriesNumber}
                                     </span>
@@ -203,6 +222,61 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                 ))}
             </div>
 
+
+            {/* Context Menu */}
+            {contextMenu && (
+                <div
+                    className="fixed z-50 bg-[#1e1e1e] border border-white/10 rounded-lg shadow-xl py-1 min-w-[160px]"
+                    style={{ top: contextMenu.y, left: contextMenu.x }}
+                    onMouseLeave={() => setContextMenu(null)}
+                >
+                    <button
+                        className="w-full text-left px-3 py-1.5 text-xs text-white hover:bg-peregrine-accent hover:text-white transition-colors flex items-center gap-2"
+                        onClick={() => {
+                            setSelectedSeriesForSend(contextMenu.seriesUid);
+                            setShowSendModal(true);
+                            setContextMenu(null);
+                        }}
+                    >
+                        <span>Send to PACS...</span>
+                    </button>
+                </div>
+            )}
+
+            {/* Send Modal */}
+            {showSendModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowSendModal(false)}>
+                    <div className="bg-[#1e1e1e] border border-white/10 rounded-xl w-[300px] p-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+                        <h3 className="text-white font-bold text-sm mb-3">Send Series to PACS</h3>
+                        <div className="space-y-1 mb-4">
+                            {servers.map(server => (
+                                <button
+                                    key={server.id}
+                                    onClick={async () => {
+                                        if (selectedSeriesForSend && db) {
+                                            // Get file paths for series
+                                            const files = await db.T_FilePath.find({ selector: { seriesInstanceUID: selectedSeriesForSend } }).exec();
+                                            const filePaths = files.map(f => f.filePath);
+                                            sendToPacs(server, filePaths);
+                                            setShowSendModal(false);
+                                        }
+                                    }}
+                                    className="w-full text-left px-3 py-2 text-xs text-gray-300 hover:bg-white/5 rounded-lg transition-colors flex justify-between items-center group"
+                                >
+                                    <span>{server.aeTitle}</span>
+                                    <span className="text-[9px] text-gray-500 group-hover:text-white/50">{server.address}:{server.port}</span>
+                                </button>
+                            ))}
+                        </div>
+                        <button
+                            onClick={() => setShowSendModal(false)}
+                            className="w-full py-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white text-xs rounded-lg transition-colors"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

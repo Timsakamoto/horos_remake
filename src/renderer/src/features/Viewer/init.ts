@@ -20,6 +20,7 @@ import {
     CobbAngleTool,
     BidirectionalTool,
     MagnifyTool,
+    CrosshairsTool,
 } from '@cornerstonejs/tools';
 import {
     cornerstoneStreamingImageVolumeLoader,
@@ -55,6 +56,7 @@ export const initCornerstone = async () => {
         StackScrollMouseWheelTool,
         StackScrollTool,
         MagnifyTool,
+        CrosshairsTool,
     ];
 
     const annotationTools = [

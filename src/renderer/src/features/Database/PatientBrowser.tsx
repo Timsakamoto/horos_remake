@@ -40,16 +40,16 @@ export const PatientBrowser: React.FC<PatientBrowserProps> = ({
                 <div className="flex justify-between items-center pr-1">
                     <span className="text-[10px] font-black text-gray-300 uppercase tracking-[0.2em]">Local Database</span>
                     <div className="flex gap-4">
-                        <button onClick={onImportClick} className="text-gray-300 hover:text-horos-accent transition-colors" title="Import"><Upload size={14} strokeWidth={2.5} /></button>
-                        <button className="text-gray-300 hover:text-horos-accent transition-colors"><MoreHorizontal size={14} strokeWidth={2.5} /></button>
+                        <button onClick={onImportClick} className="text-gray-300 hover:text-peregrine-accent transition-colors" title="Import"><Upload size={14} strokeWidth={2.5} /></button>
+                        <button className="text-gray-300 hover:text-peregrine-accent transition-colors"><MoreHorizontal size={14} strokeWidth={2.5} /></button>
                     </div>
                 </div>
                 <div className="relative group">
-                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300 group-focus-within:text-horos-accent transition-colors" size={14} strokeWidth={2.5} />
+                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300 group-focus-within:text-peregrine-accent transition-colors" size={14} strokeWidth={2.5} />
                     <input
                         type="text"
                         placeholder="Filter database..."
-                        className="w-full pl-10 pr-4 py-2 text-[12px] font-medium bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-horos-accent/20 outline-none transition-all placeholder:text-gray-300"
+                        className="w-full pl-10 pr-4 py-2 text-[12px] font-medium bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-peregrine-accent/20 outline-none transition-all placeholder:text-gray-300"
                         value={filterText}
                         onChange={(e) => setFilterText(e.target.value)}
                     />
@@ -74,8 +74,8 @@ export const PatientBrowser: React.FC<PatientBrowserProps> = ({
                                 <div className={`
                                     w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-300
                                     ${selectedId === patient.id
-                                        ? 'bg-horos-accent text-white scale-105'
-                                        : 'bg-blue-50 text-horos-accent group-hover:bg-blue-100'
+                                        ? 'bg-peregrine-accent text-white scale-105'
+                                        : 'bg-blue-50 text-peregrine-accent group-hover:bg-blue-100'
                                     }
                                 `}>
                                     <User size={16} strokeWidth={selectedId === patient.id ? 2.5 : 2} />

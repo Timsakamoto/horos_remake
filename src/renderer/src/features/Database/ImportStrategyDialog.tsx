@@ -24,7 +24,7 @@ export const ImportStrategyDialog: React.FC<Props> = ({ onSelect, fileCount }) =
 
                 {/* Content Area */}
                 <div className="p-8 flex flex-col items-center gap-6">
-                    <div className="w-16 h-16 bg-[#387aff]/10 rounded-2xl flex items-center justify-center text-horos-accent">
+                    <div className="w-16 h-16 bg-[#387aff]/10 rounded-2xl flex items-center justify-center text-peregrine-accent">
                         <Database size={32} strokeWidth={1.5} />
                     </div>
 
@@ -33,7 +33,7 @@ export const ImportStrategyDialog: React.FC<Props> = ({ onSelect, fileCount }) =
                             Ready to import {fileCount} items
                         </h2>
                         <p className="text-[11px] text-gray-500 leading-relaxed max-w-[280px]">
-                            Choose how Horos should handle these files. Copying to the database is safer for long-term storage.
+                            Choose how Peregrine should handle these files. Copying to the database is safer for long-term storage.
                         </p>
                     </div>
 
@@ -41,7 +41,7 @@ export const ImportStrategyDialog: React.FC<Props> = ({ onSelect, fileCount }) =
                         {/* Copy Option */}
                         <button
                             onClick={() => onSelect('copy')}
-                            className="group flex items-center justify-between p-3 bg-white border border-[#d0d0d0] hover:border-horos-accent/50 rounded-xl transition-all shadow-sm hover:shadow-md"
+                            className="group flex items-center justify-between p-3 bg-white border border-[#d0d0d0] hover:border-peregrine-accent/50 rounded-xl transition-all shadow-sm hover:shadow-md"
                         >
                             <div className="flex items-center gap-4 text-left">
                                 <div className="p-2 bg-green-500/10 rounded-lg text-green-600 group-hover:bg-green-500 group-hover:text-white transition-colors">
@@ -49,16 +49,16 @@ export const ImportStrategyDialog: React.FC<Props> = ({ onSelect, fileCount }) =
                                 </div>
                                 <div>
                                     <div className="text-[11px] font-black text-gray-800 uppercase">Copy to Database</div>
-                                    <div className="text-[9px] text-gray-500">Files will be moved to the managed Horos folder.</div>
+                                    <div className="text-[9px] text-gray-500">Files will be moved to the managed Peregrine folder.</div>
                                 </div>
                             </div>
-                            <div className="w-4 h-4 rounded-full border-2 border-gray-200 group-hover:border-horos-accent group-hover:bg-horos-accent/20 transition-all" />
+                            <div className="w-4 h-4 rounded-full border-2 border-gray-200 group-hover:border-peregrine-accent group-hover:bg-peregrine-accent/20 transition-all" />
                         </button>
 
                         {/* Link Option */}
                         <button
                             onClick={() => onSelect('link')}
-                            className="group flex items-center justify-between p-3 bg-white border border-[#d0d0d0] hover:border-horos-accent/50 rounded-xl transition-all shadow-sm hover:shadow-md"
+                            className="group flex items-center justify-between p-3 bg-white border border-[#d0d0d0] hover:border-peregrine-accent/50 rounded-xl transition-all shadow-sm hover:shadow-md"
                         >
                             <div className="flex items-center gap-4 text-left">
                                 <div className="p-2 bg-blue-500/10 rounded-lg text-blue-600 group-hover:bg-blue-500 group-hover:text-white transition-colors">
@@ -66,10 +66,10 @@ export const ImportStrategyDialog: React.FC<Props> = ({ onSelect, fileCount }) =
                                 </div>
                                 <div>
                                     <div className="text-[11px] font-black text-gray-800 uppercase">Link Files</div>
-                                    <div className="text-[9px] text-gray-500">Horos will only reference the original locations.</div>
+                                    <div className="text-[9px] text-gray-500">Peregrine will only reference the original locations.</div>
                                 </div>
                             </div>
-                            <div className="w-4 h-4 rounded-full border-2 border-gray-200 group-hover:border-horos-accent group-hover:bg-horos-accent/20 transition-all" />
+                            <div className="w-4 h-4 rounded-full border-2 border-gray-200 group-hover:border-peregrine-accent group-hover:bg-peregrine-accent/20 transition-all" />
                         </button>
                     </div>
                 </div>

@@ -1,32 +1,17 @@
 import { useState } from 'react';
-import { Download, Inbox, Loader2 } from 'lucide-react';
+import { Download, Inbox, Loader2, Activity } from 'lucide-react';
 import { usePACS } from './PACSProvider';
-import { useDatabase } from '../Database/DatabaseProvider';
-import { importStudyFromPACS } from '../Database/importService';
+import { PACSStudy } from './pacsClient';
+import { PACSActivityMonitor } from './PACSActivityMonitor';
 
 export const PACSResults = () => {
-    const { results, isSearching, activeServer } = usePACS();
-    const { db } = useDatabase();
-    const [downloadingStudy, setDownloadingStudy] = useState<string | null>(null);
-    const [progress, setProgress] = useState<string>('');
+    const { results, isSearching, retrieve, activeJobs } = usePACS();
+    const [showActivity, setShowActivity] = useState(false);
 
-    const handleDownload = async (studyUID: string) => {
-        if (!db || !activeServer) return;
-        setDownloadingStudy(studyUID);
-        try {
-            await importStudyFromPACS(db, activeServer.url, studyUID, (msg) => {
-                setProgress(msg);
-            });
-            // Success - maybe show a checkmark or notification
-            setProgress('Import Complete!');
-            setTimeout(() => {
-                setDownloadingStudy(null);
-                setProgress('');
-            }, 2000);
-        } catch (error) {
-            console.error('Download failed:', error);
-            setProgress('Failed to download');
-            setTimeout(() => setDownloadingStudy(null), 3000);
+    const handleDownload = async (study: PACSStudy) => {
+        const success = await retrieve(study.studyInstanceUID);
+        if (success) {
+            setShowActivity(true);
         }
     };
 
@@ -38,7 +23,7 @@ export const PACSResults = () => {
                 </div>
                 <div className="flex flex-col items-center">
                     <span className="text-sm font-bold text-gray-400">No results to display</span>
-                    <span className="text-[10px] uppercase tracking-widest font-black">Adjust your filters or active node</span>
+                    <span className="text-[10px] uppercase tracking-widest font-black text-gray-300">Adjust filters or query node</span>
                 </div>
             </div>
         );
@@ -46,77 +31,139 @@ export const PACSResults = () => {
 
     return (
         <div className="flex-1 overflow-hidden flex flex-col bg-white relative">
+            {/* Table Header / Toolbar */}
+            <div className="px-6 py-3 border-b border-gray-200 bg-white flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                        <Inbox size={12} />
+                        {results.length} Studies Found
+                    </span>
+                </div>
+                <button
+                    onClick={() => setShowActivity(!showActivity)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${showActivity
+                        ? 'bg-peregrine-accent text-white border-peregrine-accent shadow-sm'
+                        : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                        }`}
+                >
+                    <Activity size={12} className={activeJobs.some(j => j.status === 'active') ? 'animate-spin' : ''} />
+                    Activity Monitor
+                    {activeJobs.some(j => j.status === 'active') && (
+                        <span className="flex h-2 w-2 relative">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                        </span>
+                    )}
+                </button>
+            </div>
+
             <div className="flex-1 overflow-y-auto custom-scrollbar">
                 <table className="w-full text-left select-none border-collapse">
                     <thead className="sticky top-0 z-10">
-                        <tr className="bg-white border-b border-gray-100 text-[10px] font-black text-gray-300 uppercase tracking-[0.15em]">
-                            <th className="px-6 py-4 font-black">Patient Name</th>
-                            <th className="px-4 py-4 font-black text-center">Mod</th>
-                            <th className="px-4 py-4 font-black">Study Date</th>
-                            <th className="px-4 py-4 font-black">Description</th>
-                            <th className="px-4 py-4 font-black text-right">Inst</th>
-                            <th className="px-6 py-4 font-black text-center">Action</th>
+                        <tr className="bg-gray-50 border-b border-gray-100 text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                            <th className="px-4 py-3 font-black w-14"></th>
+                            <th className="px-4 py-3 font-black">Patient Name</th>
+                            <th className="px-4 py-3 font-black">ID / Accession</th>
+                            <th className="px-4 py-3 font-black">Modality</th>
+                            <th className="px-4 py-3 font-black">Date & Time</th>
+                            <th className="px-4 py-3 font-black">Description</th>
+                            <th className="px-4 py-3 font-black text-right">#</th>
+                            <th className="px-4 py-3 font-black text-right">Node</th>
                         </tr>
                     </thead>
-                    <tbody className="text-[13px] text-gray-600 font-medium">
-                        {results.map((result) => (
-                            <tr
-                                key={result.studyInstanceUID}
-                                className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors group cursor-pointer"
-                            >
-                                <td className="px-6 py-4">
-                                    <div className="flex flex-col">
-                                        <span className="font-bold text-gray-900">{result.patientName}</span>
-                                        <span className="text-[10px] text-gray-400 font-medium">{result.patientId}</span>
-                                    </div>
-                                </td>
-                                <td className="px-4 py-4 text-center">
-                                    <span className="px-2 py-0.5 bg-blue-50 text-horos-accent rounded-full text-[10px] font-black uppercase tracking-widest">
-                                        {result.modality || '??'}
-                                    </span>
-                                </td>
-                                <td className="px-4 py-4 tabular-nums text-gray-500">{result.studyDate}</td>
-                                <td className="px-4 py-4 truncate max-w-xs text-gray-400 font-semibold">{result.description}</td>
-                                <td className="px-4 py-4 text-right tabular-nums font-bold text-gray-400">{result.numInstances}</td>
-                                <td className="px-6 py-4 text-center">
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleDownload(result.studyInstanceUID);
-                                        }}
-                                        disabled={!!downloadingStudy}
-                                        className="p-2.5 rounded-xl text-horos-accent bg-blue-50 opacity-0 group-hover:opacity-100 hover:bg-horos-accent hover:text-white transition-all transform hover:scale-110 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
-                                    >
-                                        <Download size={16} strokeWidth={2.5} />
-                                    </button>
-                                </td>
-                            </tr>
-                        ))}
+                    <tbody className="text-[12px] text-gray-600 font-medium">
+                        {results.map((result) => {
+                            const activeJob = activeJobs.find(j =>
+                                j.type === 'C-MOVE' &&
+                                j.status === 'active' &&
+                                j.description.includes(result.studyInstanceUID)
+                            );
+                            const isDownloading = !!activeJob;
+
+                            return (
+                                <tr
+                                    key={result.studyInstanceUID}
+                                    className={`border-b border-gray-50 transition-all cursor-pointer group ${isDownloading ? 'bg-blue-50/30' : 'hover:bg-blue-50/10'
+                                        }`}
+                                >
+                                    <td className="px-4 py-3 text-center">
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDownload(result);
+                                            }}
+                                            disabled={isDownloading}
+                                            className={`p-2 rounded-lg transition-all ${isDownloading
+                                                ? 'text-blue-500 bg-blue-50 cursor-wait'
+                                                : 'text-gray-300 hover:text-peregrine-accent hover:bg-blue-50'
+                                                }`}
+                                            title="Retrieve Study"
+                                        >
+                                            {isDownloading ? (
+                                                <Loader2 size={14} className="animate-spin" />
+                                            ) : (
+                                                <Download size={14} />
+                                            )}
+                                        </button>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                        <span className="font-bold text-gray-800 block text-[13px]">{result.patientName}</span>
+                                        <span className="text-[10px] text-gray-400">{result.patientBirthDate}</span>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                        <div className="flex flex-col">
+                                            <span className="font-mono text-gray-600">{result.patientId}</span>
+                                            {isDownloading ? (
+                                                <div className="space-y-1 mt-1">
+                                                    <div className="text-[9px] font-bold text-peregrine-accent uppercase animate-pulse">
+                                                        {activeJob.progress}% Received
+                                                    </div>
+                                                    <div className="w-full h-1 bg-blue-100 rounded-full overflow-hidden">
+                                                        <div
+                                                            className="h-full bg-peregrine-accent transition-all duration-300"
+                                                            style={{ width: `${activeJob.progress}%` }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <span className="text-[10px] text-gray-400 font-mono">{result.accessionNumber}</span>
+                                            )}
+                                        </div>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                        <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px] font-bold">
+                                            {result.modality}
+                                        </span>
+                                    </td>
+                                    <td className="px-4 py-3 tabular-nums text-gray-500">
+                                        <div className="flex flex-col">
+                                            <span>{result.studyDate}</span>
+                                            <span className="text-[10px] text-gray-400">{result.studyTime}</span>
+                                        </div>
+                                    </td>
+                                    <td className="px-4 py-3 truncate max-w-xs text-gray-500 font-medium" title={result.description}>
+                                        {result.description}
+                                    </td>
+                                    <td className="px-4 py-3 text-right tabular-nums font-mono text-gray-400">
+                                        {result.numInstances}
+                                    </td>
+                                    <td className="px-4 py-3 text-right text-[10px] font-bold text-gray-300 uppercase tracking-wider">
+                                        {result.sourceAeTitle}
+                                    </td>
+                                </tr>
+                            );
+                        })}
                     </tbody>
                 </table>
             </div>
 
-            {/* Loading/Download Indicator Overlay */}
-            {(isSearching || downloadingStudy) && (
-                <div className="absolute inset-0 bg-white/70 backdrop-blur-[2px] flex items-center justify-center z-20 animate-in fade-in duration-300">
-                    <div className="flex flex-col items-center gap-3">
-                        {isSearching ? (
-                            <>
-                                <div className="w-2 h-2 rounded-full bg-horos-accent animate-ping" />
-                                <span className="text-[11px] font-black text-horos-accent uppercase tracking-widest">Searching Server...</span>
-                            </>
-                        ) : (
-                            <>
-                                <Loader2 className="animate-spin text-horos-accent" size={24} />
-                                <div className="flex flex-col items-center">
-                                    <span className="text-[11px] font-black text-gray-900 uppercase tracking-widest">Importing Study</span>
-                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-1">{progress}</span>
-                                </div>
-                            </>
-                        )}
-                    </div>
+            {isSearching && (
+                <div className="absolute inset-x-0 top-0 h-1 bg-blue-100 overflow-hidden">
+                    <div className="h-full bg-peregrine-accent animate-progress-indeterminate origin-left" />
                 </div>
             )}
+
+            {showActivity && <PACSActivityMonitor onClose={() => setShowActivity(false)} />}
         </div>
     );
 };

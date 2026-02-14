@@ -15,12 +15,15 @@ export interface StudyDocType {
     referringPhysicianName: string;
     ImportDateTime: string;
     patientId: string;
+    status?: 'pending' | 'completed' | 'local';
+    isRemote?: boolean;
+    userComments?: string;
     // Searchable normalized field
     studyDescriptionNormalized: string;
 }
 
 export const StudySchema: RxJsonSchema<StudyDocType> = {
-    version: 1,
+    version: 3,
     primaryKey: 'studyInstanceUID',
     type: 'object',
     properties: {
@@ -74,8 +77,18 @@ export const StudySchema: RxJsonSchema<StudyDocType> = {
         },
         studyDescriptionNormalized: {
             type: 'string'
+        },
+        status: {
+            type: 'string',
+            enum: ['pending', 'completed', 'local']
+        },
+        userComments: {
+            type: 'string'
+        },
+        isRemote: {
+            type: 'boolean'
         }
     },
     required: ['studyInstanceUID', 'patientId'],
-    indexes: ['patientId', 'studyDate', 'ImportDateTime', 'studyDescriptionNormalized']
+    indexes: ['patientId', 'studyDate', 'ImportDateTime', 'studyDescriptionNormalized', 'userComments']
 };

@@ -6,7 +6,23 @@ import {
     getRenderingEngine,
     cache,
 } from '@cornerstonejs/core';
-import { ToolGroupManager, Enums as csToolsEnums } from '@cornerstonejs/tools';
+import {
+    ToolGroupManager,
+    Enums as csToolsEnums,
+    WindowLevelTool,
+    PanTool,
+    ZoomTool,
+    MagnifyTool,
+    LengthTool,
+    AngleTool,
+    RectangleROITool,
+    EllipticalROITool,
+    ProbeTool,
+    ArrowAnnotateTool,
+    BidirectionalTool,
+    CobbAngleTool,
+    StackScrollMouseWheelTool
+} from '@cornerstonejs/tools';
 import { useDatabase } from '../Database/DatabaseProvider';
 import { OverlayManager } from './OverlayManager';
 import { prefetchMetadata } from './electronLoader';
@@ -31,6 +47,7 @@ interface Props {
     isCinePlaying?: boolean;
     showOverlays?: boolean;
     isActive?: boolean;
+    autoFit?: boolean;
 }
 
 const TOOL_GROUP_ID = 'main-tool-group';
@@ -46,7 +63,8 @@ export const Viewport = ({
     isSynced = false,
     isCinePlaying = false,
     showOverlays = true,
-    isActive = false
+    isActive = false,
+    autoFit = false
 }: Props) => {
     const elementRef = useRef<HTMLDivElement>(null);
     const { db } = useDatabase();
@@ -91,30 +109,37 @@ export const Viewport = ({
 
         toolGroup.setToolActive('StackScrollMouseWheel');
 
-        let csToolName: string = activeTool;
-        if (activeTool === 'Length') csToolName = 'Length';
-        else if (activeTool === 'Rectangle') csToolName = 'RectangleROI';
-        else if (activeTool === 'Ellipse') csToolName = 'EllipticalROI';
-        else if (activeTool === 'Arrow') csToolName = 'ArrowAnnotate';
-        else if (activeTool === 'Probe') csToolName = 'Probe';
-        else if (activeTool === 'Angle') csToolName = 'Angle';
-        else if (activeTool === 'Bidirectional') csToolName = 'Bidirectional';
-        else if (activeTool === 'Magnify') csToolName = 'Magnify';
-        else if (activeTool === 'Text') csToolName = 'ArrowAnnotate';
+        let csToolName: string = '';
+        if (activeTool === 'WindowLevel') csToolName = WindowLevelTool.toolName;
+        else if (activeTool === 'Pan') csToolName = PanTool.toolName;
+        else if (activeTool === 'Zoom') csToolName = ZoomTool.toolName;
+        else if (activeTool === 'Length') csToolName = LengthTool.toolName;
+        else if (activeTool === 'Rectangle') csToolName = RectangleROITool.toolName;
+        else if (activeTool === 'Ellipse') csToolName = EllipticalROITool.toolName;
+        else if (activeTool === 'Arrow') csToolName = ArrowAnnotateTool.toolName;
+        else if (activeTool === 'Probe') csToolName = ProbeTool.toolName;
+        else if (activeTool === 'Angle') csToolName = AngleTool.toolName;
+        else if (activeTool === 'Bidirectional') csToolName = BidirectionalTool.toolName;
+        else if (activeTool === 'Magnify') csToolName = MagnifyTool.toolName || 'Magnify';
+        else if (activeTool === 'Text') csToolName = ArrowAnnotateTool.toolName;
 
-        if (toolGroup.hasTool(csToolName)) {
+        if (csToolName && toolGroup.hasTool(csToolName)) {
             toolGroup.setToolActive(csToolName, {
                 bindings: [{ mouseButton: MouseBindings.Primary }]
             });
         }
 
-        toolGroup.setToolActive('Pan', {
-            bindings: [{ mouseButton: MouseBindings.Secondary }]
-        });
-
-        toolGroup.setToolActive('Zoom', {
-            bindings: [{ mouseButton: MouseBindings.Auxiliary }]
-        });
+        // Standard navigation tools on other buttons
+        if (csToolName !== PanTool.toolName) {
+            toolGroup.setToolActive(PanTool.toolName, {
+                bindings: [{ mouseButton: MouseBindings.Secondary }]
+            });
+        }
+        if (csToolName !== ZoomTool.toolName) {
+            toolGroup.setToolActive(ZoomTool.toolName, {
+                bindings: [{ mouseButton: MouseBindings.Auxiliary }]
+            });
+        }
 
     }, [activeTool, isThumbnail]);
 
@@ -287,6 +312,7 @@ export const Viewport = ({
                     }
                 }
 
+                viewport.resetCamera();
                 viewport.render();
                 setStatus('');
 
@@ -314,7 +340,16 @@ export const Viewport = ({
 
                 resizeObserver = new ResizeObserver(() => {
                     const engine = getRenderingEngine(renderingEngineId);
-                    if (engine) engine.resize();
+                    if (engine) {
+                        engine.resize();
+                        if (autoFit) {
+                            const vp = engine.getViewport(viewportId) as Types.IStackViewport;
+                            if (vp) {
+                                vp.resetCamera();
+                                vp.render();
+                            }
+                        }
+                    }
                 });
                 resizeObserver.observe(elementRef.current);
 
@@ -381,8 +416,8 @@ export const Viewport = ({
 
             {/* Active Highlight & Label */}
             {isActive && (
-                <div className="absolute inset-0 pointer-events-none border border-horos-accent z-20 shadow-[inset_0_0_10px_rgba(37,99,235,0.2)]">
-                    <div className="absolute top-0 right-0 bg-horos-accent text-white text-[8px] font-black px-1.5 py-0.5 uppercase tracking-widest shadow-lg">
+                <div className="absolute inset-0 pointer-events-none border border-peregrine-accent z-20 shadow-[inset_0_0_10px_rgba(37,99,235,0.2)]">
+                    <div className="absolute top-0 right-0 bg-peregrine-accent text-white text-[8px] font-black px-1.5 py-0.5 uppercase tracking-widest shadow-lg">
                         Active
                     </div>
                 </div>
@@ -415,7 +450,7 @@ export const Viewport = ({
             {status && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20">
                     <div className="flex flex-col items-center gap-3">
-                        <div className="w-8 h-8 border-2 border-horos-accent border-t-transparent rounded-full animate-spin" />
+                        <div className="w-8 h-8 border-2 border-peregrine-accent border-t-transparent rounded-full animate-spin" />
                         <span className="text-[10px] font-black uppercase tracking-widest text-white/50">{status}</span>
                     </div>
                 </div>

@@ -25,6 +25,7 @@ interface Patient {
     studyDescription?: string;
     accessionNumber?: string;
     studyDate?: string;
+    userComments?: string;
 }
 
 interface Study {
@@ -42,6 +43,7 @@ interface Study {
     accessionNumber: string;
     ImportDateTime: string;
     patientId: string;
+    userComments?: string;
 }
 
 // Search filter criteria (A6)
@@ -54,6 +56,12 @@ interface SearchFilters {
     };
     modalities: string[]; // Selected modalities
     studyDescription: string;
+    userComments: string;
+}
+
+interface SortConfig {
+    key: string;
+    direction: 'asc' | 'desc';
 }
 
 interface DatabaseContextType {
@@ -71,6 +79,8 @@ interface DatabaseContextType {
     runCleanup: () => Promise<CleanupReport | null>;
     isCleaningUp: boolean;
     removeDatabase: () => Promise<void>;
+    sortConfig: SortConfig;
+    setSortConfig: (config: SortConfig) => void;
 }
 
 const emptyFilters: SearchFilters = {
@@ -78,7 +88,8 @@ const emptyFilters: SearchFilters = {
     patientID: '',
     dateRange: { start: '', end: '' },
     modalities: [],
-    studyDescription: ''
+    studyDescription: '',
+    userComments: ''
 };
 
 const DatabaseContext = createContext<DatabaseContextType>({
@@ -96,6 +107,8 @@ const DatabaseContext = createContext<DatabaseContextType>({
     runCleanup: async () => null,
     isCleaningUp: false,
     removeDatabase: async () => { },
+    sortConfig: { key: 'ImportDateTime', direction: 'desc' },
+    setSortConfig: () => { }
 });
 
 export const useDatabase = () => {
@@ -117,6 +130,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const [error, setError] = useState<string | null>(null);
     const [importProgress, setImportProgress] = useState<{ current: number; total: number; percent: number; message?: string } | null>(null);
     const [cleanupReport, setCleanupReport] = useState<CleanupReport | null>(null);
+    const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'ImportDateTime', direction: 'desc' });
 
     useEffect(() => {
         let sub: any;
@@ -128,7 +142,10 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
                 if (viewMode === 'patient') {
                     // Subscribe to patients collection (Original Logic)
-                    sub = database.T_Patient.find().$.subscribe(async (docs) => {
+                    const sortKey = sortConfig.key === 'patientName' ? 'patientName' : 'id';
+                    sub = database.T_Patient.find({
+                        sort: [{ [sortKey]: sortConfig.direction }]
+                    }).$.subscribe(async (docs) => {
                         console.log(`DatabaseProvider: Received ${docs.length} patients from T_Patient`);
                         const allModalities = new Set<string>();
 
@@ -150,7 +167,8 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                                 patientSex: doc.patientSex || '',
                                 studyCount,
                                 modalities: ptModalities,
-                                studyDate: studies[0]?.studyDate || '' // Store latest study date for filtering
+                                studyDate: studies[0]?.studyDate || '', // Store latest study date for filtering
+                                userComments: studies[0]?.userComments || ''
                             };
                         }));
                         setPatients(mappedPatients);
@@ -158,8 +176,9 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                     });
                 } else {
                     // STUDY LIST MODE: Subscribe to T_Study directly
+                    const sortKey = ['ImportDateTime', 'studyDate', 'userComments', 'studyDescription'].includes(sortConfig.key) ? sortConfig.key : 'ImportDateTime';
                     sub = database.T_Study.find({
-                        sort: [{ ImportDateTime: 'desc' }]
+                        sort: [{ [sortKey]: sortConfig.direction }]
                     }).$.subscribe(async (docs) => {
                         console.log(`DatabaseProvider: Received ${docs.length} studies from T_Study`);
                         const allModalities = new Set<string>();
@@ -179,7 +198,8 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                                 _isStudy: true,
                                 studyDescription: doc.studyDescription,
                                 accessionNumber: doc.accessionNumber,
-                                studyDate: doc.studyDate
+                                studyDate: doc.studyDate,
+                                userComments: doc.userComments || ''
                             };
                         });
 
@@ -212,7 +232,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         };
         initDb();
         return () => sub?.unsubscribe();
-    }, [viewMode]);
+    }, [viewMode, sortConfig]);
 
     // Auto-reimport logic after database reset
     useEffect(() => {
@@ -220,7 +240,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             const shouldReimport = localStorage.getItem('horos_reimport_after_reset') === 'true';
             if (shouldReimport && db && databasePath) {
                 console.log('DatabaseProvider: Auto-reimporting from:', databasePath);
-                localStorage.removeItem('horos_reimport_after_reset');
+                localStorage.removeItem('peregrine_reimport_after_reset');
 
                 try {
                     setImportProgress({ current: 0, total: 100, percent: 0, message: 'Scanning for files...' });
@@ -245,10 +265,10 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     // Filtered patients based on search criteria (A6)
     const filteredPatients = React.useMemo(() => {
-        const { patientName, patientID, modalities, studyDescription, dateRange } = searchFilters;
+        const { patientName, patientID, modalities, studyDescription, dateRange, userComments } = searchFilters;
 
         // Check if any filters are active
-        const hasFilters = patientName || patientID || modalities.length > 0 || studyDescription || dateRange.start || dateRange.end;
+        const hasFilters = patientName || patientID || modalities.length > 0 || studyDescription || dateRange.start || dateRange.end || userComments;
 
         if (!hasFilters) {
             return patients;
@@ -299,6 +319,13 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             if (studyDescription) {
                 const searchTerm = studyDescription.toLowerCase().trim();
                 const target = String(p.studyDescription || '').toLowerCase();
+                if (!target.includes(searchTerm)) return false;
+            }
+
+            // User Comments Filter
+            if (userComments) {
+                const searchTerm = userComments.toLowerCase().trim();
+                const target = String(p.userComments || '').toLowerCase();
                 if (!target.includes(searchTerm)) return false;
             }
 
@@ -400,6 +427,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 accessionNumber: s.accessionNumber,
                 ImportDateTime: s.ImportDateTime,
                 patientId: s.patientId,
+                userComments: s.userComments || ''
             }));
 
             setStudies(studiesWithDetails);
@@ -577,7 +605,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 <div className="max-w-md space-y-2">
                     <h1 className="text-2xl font-bold text-white tracking-tight">Database Initialization Error</h1>
                     <p className="text-sm text-white/60 leading-relaxed">
-                        Horos could not establish a connection to its internal database. This often happens due to browser storage limitations or corruption.
+                        Peregrine could not establish a connection to its internal database. This often happens due to browser storage limitations or corruption.
                     </p>
                     <div className="mt-4 p-3 bg-red-500/5 border border-red-500/10 rounded-lg text-xs font-mono text-red-400/80 break-all">
                         {error}
@@ -617,7 +645,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return (
             <div className="flex flex-col items-center justify-center h-screen bg-[#1a1a1a] text-blue-400 gap-4">
                 <div className="w-8 h-8 border-4 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                <span className="text-xs font-black uppercase tracking-[0.2em]">Initializing Horos Database...</span>
+                <span className="text-xs font-black uppercase tracking-[0.2em]">Initializing Peregrine Database...</span>
             </div>
         );
     }
@@ -640,7 +668,9 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             removeDatabase: async () => {
                 await removeDatabase();
                 window.location.reload();
-            }
+            },
+            sortConfig,
+            setSortConfig
         }}>
             {children}
             {showImportDialog && (
@@ -661,7 +691,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                     <div className="bg-white/95 backdrop-blur-md rounded-2xl p-5 shadow-[0_10px_40px_rgba(0,0,0,0.1)] border border-gray-100 w-[320px] flex flex-col gap-4 pointer-events-auto">
                         <div className="flex flex-col gap-1">
                             <h3 className="text-[12px] font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-horos-accent animate-pulse" />
+                                <div className="w-1.5 h-1.5 rounded-full bg-peregrine-accent animate-pulse" />
                                 Importing Files
                             </h3>
                             <p className="text-[10px] font-bold text-gray-400 truncate">
@@ -673,11 +703,11 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                             <div className="overflow-hidden h-1.5 text-xs flex rounded-full bg-blue-50">
                                 <div
                                     style={{ width: `${importProgress.percent}%` }}
-                                    className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-horos-accent transition-all duration-500 ease-out"
+                                    className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-peregrine-accent transition-all duration-500 ease-out"
                                 />
                             </div>
                             <div className="flex justify-between items-center mt-2">
-                                <span className="text-[9px] font-black text-horos-accent tabular-nums uppercase tracking-tighter">
+                                <span className="text-[9px] font-black text-peregrine-accent tabular-nums uppercase tracking-tighter">
                                     {importProgress.percent}% Complete
                                 </span>
                                 {importProgress.percent === 100 && (
@@ -712,7 +742,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                         </div>
                         <button
                             onClick={() => setCleanupReport(null)}
-                            className="mt-4 w-full py-2 bg-horos-accent text-white font-bold rounded-lg text-xs"
+                            className="mt-4 w-full py-2 bg-peregrine-accent text-white font-bold rounded-lg text-xs"
                         >
                             OK
                         </button>

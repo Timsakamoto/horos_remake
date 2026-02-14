@@ -6,6 +6,8 @@ export interface PatientDocType {
     patientID: string;
     patientBirthDate: string;
     patientSex: string;
+    issuerOfPatientID: string;
+    institutionName: string;
     // Searchable normalized field for case-insensitive search
     patientNameNormalized: string;
 }
@@ -29,6 +31,12 @@ export const PatientSchema: RxJsonSchema<PatientDocType> = {
             type: 'string'
         },
         patientSex: {
+            type: 'string'
+        },
+        issuerOfPatientID: {
+            type: 'string'
+        },
+        institutionName: {
             type: 'string'
         },
         patientNameNormalized: {

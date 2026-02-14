@@ -33,11 +33,11 @@
         height: 100%;
         margin: 0;
         overflow: hidden;
-        @apply bg-horos-bg text-horos-text antialiased;
+        @apply bg-peregrine-bg text-peregrine-text antialiased;
     }
 
     * {
-        @apply border-horos-border;
+        @apply border-peregrine-border;
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
         font-feature-settings: "ss01", "ss02", "cv01", "cv11";
     }
@@ -55,7 +55,7 @@
     }
 
     .primary-button {
-        @apply px-4 py-2 bg-horos-accent text-white text-sm font-semibold hover:bg-blue-600 transition-all active:scale-[0.98] shadow-sm;
+        @apply px-4 py-2 bg-peregrine-accent text-white text-sm font-semibold hover:bg-blue-600 transition-all active:scale-[0.98] shadow-sm;
         border-radius: var(--radius-sm);
     }
 
