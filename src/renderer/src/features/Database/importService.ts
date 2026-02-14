@@ -162,12 +162,28 @@ const prepareMetadata = (
     managedDir?: string | null
 ) => {
     // 1. Generate a robust composite patient key
-    const rawPatientID = String(meta.patientID || 'UNKNOWN');
-    const rawPatientName = String(meta.patientName || 'Unknown');
-    const rawBirthDate = String(meta.patientBirthDate || '');
-    const rawSex = String(meta.patientSex || '');
-    const patientGlobalId = `${rawPatientID}_${rawPatientName}_${rawBirthDate}_${rawSex}`
-        .replace(/[^a-zA-Z0-9]/g, '_');
+    const rawPatientID = String(meta.patientID || 'UNKNOWN').trim();
+    const rawPatientName = String(meta.patientName || 'Unknown').trim();
+    const rawBirthDate = String(meta.patientBirthDate || '').trim();
+    const rawSex = String(meta.patientSex || '').trim();
+    const rawIssuer = String(meta.issuerOfPatientID || '').trim();
+    const rawInst = String(meta.institutionName || '').trim();
+
+    // Determine if this is a "generic" patient ID that shouldn't be used for global grouping
+    // Horos/OsiriX usually separates these if other metadata or sources differ.
+    const isGenericID = /^(0+|anonymous|unknown|none|no_id|unknownid)$/i.test(rawPatientID) || !rawPatientID;
+
+    let patientGlobalId: string;
+    if (isGenericID) {
+        // For generic/anonymous IDs, include institution and potentially more fields to avoid collisions.
+        // This addresses the user's issue where different "Anonymous" patients were merged.
+        patientGlobalId = `GEN_${rawPatientID}_${rawPatientName}_${rawInst}_${rawBirthDate}`
+    } else {
+        // For standard IDs, include Issuer (if any) to qualify the ID.
+        patientGlobalId = `${rawPatientID}_${rawIssuer}_${rawPatientName}_${rawBirthDate}`;
+    }
+
+    patientGlobalId = patientGlobalId.replace(/[^a-zA-Z0-9]/g, '_');
 
     // Store relative path if it's within the managed directory
     let storedPath = filePath;
@@ -181,6 +197,8 @@ const prepareMetadata = (
         patientID: rawPatientID,
         patientBirthDate: rawBirthDate,
         patientSex: rawSex,
+        issuerOfPatientID: rawIssuer,
+        institutionName: rawInst,
         patientNameNormalized: rawPatientName.toLowerCase()
     };
 
@@ -224,8 +242,24 @@ const prepareMetadata = (
         transferSyntaxUID: String(meta.transferSyntaxUID || ''),
         seriesInstanceUID: String(meta.seriesInstanceUID),
         windowCenter: Number(meta.windowCenter) || 40,
-        windowWidth: Number(meta.windowWidth) || 400
+        windowWidth: Number(meta.windowWidth) || 400,
+        rescaleIntercept: Number(meta.rescaleIntercept) || 0,
+        rescaleSlope: Number(meta.rescaleSlope) || 1,
+        imagePositionPatient: meta.imagePositionPatient ? meta.imagePositionPatient.split(/\\+/).map(Number) : undefined,
+        imageOrientationPatient: meta.imageOrientationPatient ? meta.imageOrientationPatient.split(/\\+/).map(Number) : undefined,
+        pixelSpacing: meta.pixelSpacing ? meta.pixelSpacing.split(/\\+/).map(Number) : undefined,
+        sliceThickness: Number(meta.sliceThickness) || undefined
     };
+
+    // --- ★ DEBUG IMPORT LOG ---
+    if (Math.random() < 0.05) { // Log 5% of images to avoid spam but catch samples
+        console.log(`[ImportService] Debug ${image.sopInstanceUID}:`);
+        console.log(`  Meta.IPP (Raw String):`, meta.imagePositionPatient);
+        console.log(`  Image.IPP (Parsed Array):`, image.imagePositionPatient);
+        if (!image.imagePositionPatient || image.imagePositionPatient.some(isNaN)) {
+            console.error(`  [ImportService] CRITICAL: Invalid IPP detected!`);
+        }
+    }
 
     return { patient, study, series, image };
 };

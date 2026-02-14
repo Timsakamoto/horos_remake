@@ -26,19 +26,28 @@ import {
 } from '@cornerstonejs/streaming-image-volume-loader';
 import cornerstoneDICOMImageLoader from '@cornerstonejs/dicom-image-loader';
 import dicomParser from 'dicom-parser';
+import { registerElectronImageLoader } from './electronLoader';
 
 cornerstoneDICOMImageLoader.external.cornerstone = cornerstone;
 cornerstoneDICOMImageLoader.external.dicomParser = dicomParser;
 
+// CRITICAL: Register the loader IMMEDIATELY upon module load.
+// This ensures that even if child components (Viewport) mount and call setStack 
+// before the parent (App) finishes async initCornerstone, the 'electronfile:' 
+// scheme is already recognized by Cornerstone's imageLoader.
+registerElectronImageLoader();
+
+let isInitialized = false;
+
 export const initCornerstone = async () => {
-    console.log('Cornerstone: Initializing...');
+    if (isInitialized) return;
+    console.log('Cornerstone: Initializing Core & Tools...');
 
     // 1. Init Core
     await csRenderInit();
     await csToolsInit();
 
     // 2. Register Tools Globally (Once)
-    // Core Tools
     const tools = [
         WindowLevelTool,
         PanTool,
@@ -48,7 +57,6 @@ export const initCornerstone = async () => {
         MagnifyTool,
     ];
 
-    // Annotation Tools (C1-C7)
     const annotationTools = [
         LengthTool,
         EllipticalROITool,
@@ -68,20 +76,15 @@ export const initCornerstone = async () => {
         }
     });
 
-    // 3. Configure DICOM Image Loader
-    // We disable WebWorkers for now because Electron/Vite environments have specific
-    // worker path requirements, and passing codec functions directly causes postMessage errors.
+    // 3. Configure DICOM Image Loader (Default for non-electronfile)
     cornerstoneDICOMImageLoader.configure({
         useWebWorkers: false,
         decodeConfig: {
             convertFloatPixelDataToInt: false,
-            // You can add other main-thread decoding options here if needed
         },
     });
-
-    // NOTE: If you need high-performance worker-based decoding, 
-    // you must provide worker paths and avoid passing functions in config.
-    // cornerstoneDICOMImageLoader.webWorkerManager.initialize(config);
+    cornerstoneDICOMImageLoader.wadouri.register(cornerstone);
+    cornerstoneDICOMImageLoader.wadors.register(cornerstone);
 
     // 4. Register Volume Loaders
     (volumeLoader.registerUnknownVolumeLoader as any)(
@@ -92,9 +95,6 @@ export const initCornerstone = async () => {
         cornerstoneStreamingImageVolumeLoader,
     );
 
-    // 5. Register Electron Image Loader
-    const { registerElectronImageLoader } = await import('./electronLoader');
-    registerElectronImageLoader();
-
-    console.log('Cornerstone: Initialized.');
+    isInitialized = true;
+    console.log('Cornerstone: Initialization Complete.');
 };

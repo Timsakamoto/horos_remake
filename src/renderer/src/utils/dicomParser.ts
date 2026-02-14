@@ -6,6 +6,8 @@ export interface DicomMetadata {
     patientBirthDate: string;
     patientSex: string;
     patientAge: string;
+    issuerOfPatientID: string;
+    otherPatientIDs: string;
     institutionName: string;
     referringPhysicianName: string;
     studyInstanceUID: string;
@@ -29,6 +31,13 @@ export interface DicomMetadata {
     transferSyntaxUID: string;
     windowCenter: number;
     windowWidth: number;
+    rescaleIntercept: number;
+    rescaleSlope: number;
+    // Geometry
+    imagePositionPatient: string;
+    imageOrientationPatient: string;
+    pixelSpacing: string;
+    sliceThickness: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +98,7 @@ const safeString = (val: any, fallback: string = ''): string => {
     if (val === undefined || val === null || val === '') return fallback;
     if (typeof val === 'string') return val;
     if (typeof val === 'number') return String(val);
+    if (Array.isArray(val)) return val.join('\\'); // ★ FIX: Maintain DICOM delimiter for lists
     if (typeof val === 'object') {
         // Could be a PN object → delegate
         const pn = stringifyPN(val);
@@ -121,113 +131,134 @@ const safeNumber = (val: any, fallback: number = 0): number => {
 };
 
 export const parseDicombuffer = (buffer: ArrayBuffer | Uint8Array): DicomMetadata | null => {
-    // Silence dcmjs logger
+    // Priority 1: Use dicom-parser (More robust for older/implicit/private VRs)
+    const dpMeta = parseWithDicomParser(buffer);
+    if (dpMeta) {
+        // console.log('DICOM: Parsed using dicom-parser (primary).');
+        return dpMeta;
+    }
+
+    // Priority 2: Use dcmjs (Fallback - stricter, better for some modern enhanced tags)
+    // Only runs if dicom-parser failed to extract critical UIDs
     try {
-        // @ts-ignore
-        if (dcmjs.log && dcmjs.log.setLevel) {
-            // @ts-ignore
-            dcmjs.log.setLevel('error');
-        }
-    } catch (e) { /* ignore */ }
-
-    const originalWarn = console.warn;
-    const originalLog = console.log;
-    console.warn = () => { };
-    console.log = () => { };
-
-    try {
-        const arrayBuffer = buffer instanceof Uint8Array
-            ? buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
-            : buffer;
-
-        let dicomDict;
+        // Silence dcmjs logger
         try {
-            dicomDict = dcmjs.data.DicomMessage.readFile(arrayBuffer);
-        } catch (e) {
-            dicomDict = dcmjs.data.DicomMessage.readFile(arrayBuffer, { ignoreHeader: true });
+            // @ts-ignore
+            if (dcmjs.log && dcmjs.log.setLevel) {
+                // @ts-ignore
+                dcmjs.log.setLevel('error');
+            }
+        } catch (e) { /* ignore */ }
+
+        const originalWarn = console.warn;
+        const originalLog = console.log;
+        console.warn = () => { };
+        console.log = () => { };
+
+        try {
+            const arrayBuffer = buffer instanceof Uint8Array
+                ? buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+                : buffer;
+
+            let dicomDict;
+            try {
+                dicomDict = dcmjs.data.DicomMessage.readFile(arrayBuffer);
+            } catch (e) {
+                dicomDict = dcmjs.data.DicomMessage.readFile(arrayBuffer, { ignoreHeader: true });
+            }
+            const dicomData = dcmjs.data.DicomMetaDictionary.naturalizeDataset(dicomDict.dict);
+            const metaData = dicomDict.meta ? dcmjs.data.DicomMetaDictionary.naturalizeDataset(dicomDict.meta) : {};
+
+            const get = (tag: string) => dicomData[tag];
+            const getMeta = (tag: string) => (metaData as any)[tag];
+
+            // --- Patient Level ---
+            const patientName = stringifyPN(get('PatientName')) || 'Anonymous';
+            const patientID = safeString(get('PatientID'), 'UnknownID');
+
+            // --- Study Level ---
+            const studyInstanceUID = safeString(get('StudyInstanceUID'));
+            if (!studyInstanceUID) {
+                return null;
+            }
+
+            // --- Series Level ---
+            const seriesInstanceUID = safeString(get('SeriesInstanceUID'));
+            if (!seriesInstanceUID) {
+                return null;
+            }
+
+            // --- Instance Level ---
+            const sopInstanceUID = safeString(get('SOPInstanceUID'));
+            if (!sopInstanceUID) {
+                return null;
+            }
+
+            const result = {
+                // Patient
+                patientName,
+                patientID,
+                patientBirthDate: safeString(get('PatientBirthDate')),
+                patientSex: safeString(get('PatientSex'), 'O'),
+                patientAge: safeString(get('PatientAge')),
+                issuerOfPatientID: safeString(get('IssuerOfPatientID')),
+                otherPatientIDs: safeString(get('OtherPatientIDs')),
+                institutionName: safeString(get('InstitutionName')),
+                referringPhysicianName: stringifyPN(get('ReferringPhysicianName')),
+
+                // Study
+                studyInstanceUID,
+                studyDate: safeString(get('StudyDate')),
+                studyTime: safeString(get('StudyTime')),
+                accessionNumber: safeString(get('AccessionNumber')),
+                studyDescription: safeString(get('StudyDescription')),
+                studyID: safeString(get('StudyID')),
+                modalitiesInStudy: [safeString(get('Modality'), 'OT')],
+
+                // Series
+                seriesInstanceUID,
+                seriesDate: safeString(get('SeriesDate')),
+                seriesDescription: safeString(get('SeriesDescription')),
+                seriesNumber: safeNumber(get('SeriesNumber')),
+                modality: safeString(get('Modality'), 'OT'),
+                bodyPartExamined: safeString(get('BodyPartExamined')),
+                protocolName: safeString(get('ProtocolName')),
+
+                // Instance
+                sopInstanceUID,
+                instanceNumber: safeNumber(get('InstanceNumber')),
+                sopClassUID: safeString(get('SOPClassUID')),
+                numberOfFrames: Math.max(1, safeNumber(get('NumberOfFrames'), 1)),
+                transferSyntaxUID: safeString(getMeta('TransferSyntaxUID')),
+                windowCenter: safeNumber(get('WindowCenter'), 40),
+                windowWidth: safeNumber(get('WindowWidth'), 400),
+                rescaleIntercept: safeNumber(get('RescaleIntercept'), 0),
+                rescaleSlope: safeNumber(get('RescaleSlope'), 1),
+
+                // Geometry
+                imagePositionPatient: safeString(get('ImagePositionPatient')),
+                imageOrientationPatient: safeString(get('ImageOrientationPatient')),
+                pixelSpacing: safeString(get('PixelSpacing')),
+                sliceThickness: safeNumber(get('SliceThickness')),
+            };
+
+            // Validation
+            if (!result.imagePositionPatient || result.imagePositionPatient === '') {
+                // If dcmjs fails to get geometry, we already tried dicom-parser and it failed too (since we are here).
+                // So we just return what we have, or null? 
+                // Actually, if we are here, it means dicom-parser failed. 
+                // Use dcmjs result but warn.
+            }
+
+            return result;
+
+        } finally {
+            console.warn = originalWarn;
+            console.log = originalLog;
         }
-        const dicomData = dcmjs.data.DicomMetaDictionary.naturalizeDataset(dicomDict.dict);
-        const metaData = dicomDict.meta ? dcmjs.data.DicomMetaDictionary.naturalizeDataset(dicomDict.meta) : {};
-
-        const get = (tag: string) => dicomData[tag];
-        const getMeta = (tag: string) => (metaData as any)[tag];
-
-        // --- Patient Level ---
-        const patientName = stringifyPN(get('PatientName')) || 'Anonymous';
-        const patientID = safeString(get('PatientID'), 'UnknownID');
-
-        // --- Study Level ---
-        const studyInstanceUID = safeString(get('StudyInstanceUID'));
-        if (!studyInstanceUID) {
-            // Critical: without StudyInstanceUID, the record can't be stored correctly
-            console.error('DICOM: Missing StudyInstanceUID, skipping file.');
-            return null;
-        }
-
-        // --- Series Level ---
-        const seriesInstanceUID = safeString(get('SeriesInstanceUID'));
-        if (!seriesInstanceUID) {
-            console.error('DICOM: Missing SeriesInstanceUID, skipping file.');
-            return null;
-        }
-
-        // --- Instance Level ---
-        const sopInstanceUID = safeString(get('SOPInstanceUID'));
-        if (!sopInstanceUID) {
-            console.error('DICOM: Missing SOPInstanceUID, skipping file.');
-            return null;
-        }
-
-        return {
-            // Patient
-            patientName,
-            patientID,
-            patientBirthDate: safeString(get('PatientBirthDate')),
-            patientSex: safeString(get('PatientSex'), 'O'),
-            patientAge: safeString(get('PatientAge')),
-            institutionName: safeString(get('InstitutionName')),
-            referringPhysicianName: stringifyPN(get('ReferringPhysicianName')),
-
-            // Study
-            studyInstanceUID,
-            studyDate: safeString(get('StudyDate')),
-            studyTime: safeString(get('StudyTime')),
-            accessionNumber: safeString(get('AccessionNumber')),
-            studyDescription: safeString(get('StudyDescription')),
-            studyID: safeString(get('StudyID')),
-            modalitiesInStudy: [safeString(get('Modality'), 'OT')],
-
-            // Series
-            seriesInstanceUID,
-            seriesDate: safeString(get('SeriesDate')),
-            seriesDescription: safeString(get('SeriesDescription')),
-            seriesNumber: safeNumber(get('SeriesNumber')),
-            modality: safeString(get('Modality'), 'OT'),
-            bodyPartExamined: safeString(get('BodyPartExamined')),
-            protocolName: safeString(get('ProtocolName')),
-
-            // Instance
-            sopInstanceUID,
-            instanceNumber: safeNumber(get('InstanceNumber')),
-            sopClassUID: safeString(get('SOPClassUID')),
-            numberOfFrames: Math.max(1, safeNumber(get('NumberOfFrames'), 1)),
-            transferSyntaxUID: safeString(getMeta('TransferSyntaxUID')),
-            windowCenter: safeNumber(get('WindowCenter'), 40),
-            windowWidth: safeNumber(get('WindowWidth'), 400),
-        };
     } catch (error) {
-        // Fallback to dicom-parser if dcmjs fails (likely due to compressed pixel data)
-        const dpMeta = parseWithDicomParser(buffer);
-        if (dpMeta) {
-            console.log('DICOM: Parsed using dicom-parser fallback.');
-            return dpMeta;
-        }
-
-        console.error('Error parsing DICOM:', error);
+        console.warn('dcmjs (fallback) parsing failed:', error);
         return null;
-    } finally {
-        console.warn = originalWarn;
-        console.log = originalLog;
     }
 };
 
@@ -308,6 +339,8 @@ const parseWithDicomParser = (buffer: ArrayBuffer | Uint8Array): DicomMetadata |
             patientBirthDate: getString('x00100030') || '',
             patientSex: getString('x00100040') || 'O',
             patientAge: getString('x00101010') || '',
+            issuerOfPatientID: getString('x00100021') || '',
+            otherPatientIDs: getString('x00101000') || '',
             institutionName: getString('x00080080') || '',
             referringPhysicianName: getString('x00080090') || '',
 
@@ -335,6 +368,14 @@ const parseWithDicomParser = (buffer: ArrayBuffer | Uint8Array): DicomMetadata |
             transferSyntaxUID: getString('x00020010') || '',
             windowCenter: getNumber('x00281050') || 40,
             windowWidth: getNumber('x00281051') || 400,
+            rescaleIntercept: getNumber('x00281052') || 0,
+            rescaleSlope: getNumber('x00281053') || 1,
+
+            // Geometry
+            imagePositionPatient: getString('x00200032') || '',
+            imageOrientationPatient: getString('x00200037') || '',
+            pixelSpacing: getString('x00280030') || '',
+            sliceThickness: getNumber('x00180050') || 0,
         };
     } catch (e) {
         console.error('DICOM Parser Fallback failed:', e);

@@ -9,6 +9,7 @@ import {
 import { ToolGroupManager, Enums as csToolsEnums } from '@cornerstonejs/tools';
 import { useDatabase } from '../Database/DatabaseProvider';
 import { OverlayManager } from './OverlayManager';
+import { prefetchMetadata } from './electronLoader';
 import { CLUT_PRESETS } from './CLUTPresets';
 import { addViewportToSync, removeViewportFromSync } from './SyncManager';
 import { startCine, stopCine } from './CinePlayer';
@@ -29,6 +30,7 @@ interface Props {
     isSynced?: boolean;
     isCinePlaying?: boolean;
     showOverlays?: boolean;
+    isActive?: boolean;
 }
 
 const TOOL_GROUP_ID = 'main-tool-group';
@@ -43,11 +45,12 @@ export const Viewport = ({
     activeCLUT = 'Default',
     isSynced = false,
     isCinePlaying = false,
-    showOverlays = true
+    showOverlays = true,
+    isActive = false
 }: Props) => {
     const elementRef = useRef<HTMLDivElement>(null);
     const { db } = useDatabase();
-    const [status, setStatus] = useState<string>(isThumbnail ? '' : 'Initializing...');
+    const [status, setStatus] = useState<string>('');
     const [metadata, setMetadata] = useState<any>({});
 
     // 1. Initialize Tools & Loader
@@ -97,6 +100,7 @@ export const Viewport = ({
         else if (activeTool === 'Angle') csToolName = 'Angle';
         else if (activeTool === 'Bidirectional') csToolName = 'Bidirectional';
         else if (activeTool === 'Magnify') csToolName = 'Magnify';
+        else if (activeTool === 'Text') csToolName = 'ArrowAnnotate';
 
         if (toolGroup.hasTool(csToolName)) {
             toolGroup.setToolActive(csToolName, {
@@ -162,28 +166,38 @@ export const Viewport = ({
             if (!elementRef.current) return;
             setStatus('Loading Series...');
 
-            const images = await db.T_FilePath.find({
-                selector: { seriesInstanceUID: seriesUid },
-                sort: [{ instanceNumber: 'asc' }]
-            }).exec();
+            let ids: string[] = [];
+            let images: any[] = [];
 
-            console.log(`Viewport [${viewportId}]: Found ${images.length} images for series ${seriesUid}`);
+            if (isThumbnail && initialImageId) {
+                // OPTIMIZATION: For thumbnails, do NOT load the whole series.
+                // Just load the single representative image passed in.
+                console.log(`Viewport [${viewportId}]: Thumbnail mode. Loading single image: ${initialImageId}`);
+                ids.push(`electronfile:${initialImageId}`);
+            } else {
+                // Normal Viewer Mode: Load entire series
+                images = await db.T_FilePath.find({
+                    selector: { seriesInstanceUID: seriesUid },
+                    sort: [{ instanceNumber: 'asc' }]
+                }).exec();
 
-            if (images.length === 0) {
-                setStatus('No images.');
-                return;
-            }
+                console.log(`Viewport [${viewportId}]: Found ${images.length} images for series ${seriesUid}`);
 
-            const ids: string[] = [];
-            images.forEach((img: any) => {
-                if (img.numberOfFrames > 1) {
-                    for (let i = 0; i < img.numberOfFrames; i++) {
-                        ids.push(`electronfile:${img.filePath}?frame=${i}`);
-                    }
-                } else {
-                    ids.push(`electronfile:${img.filePath}`);
+                if (images.length === 0) {
+                    setStatus('No images.');
+                    return;
                 }
-            });
+
+                images.forEach((img: any) => {
+                    if (img.numberOfFrames > 1) {
+                        for (let i = 0; i < img.numberOfFrames; i++) {
+                            ids.push(`electronfile:${img.filePath}?frame=${i}`);
+                        }
+                    } else {
+                        ids.push(`electronfile:${img.filePath}`);
+                    }
+                });
+            }
 
             console.log(`Viewport [${viewportId}]: Loading stack with ${ids.length} IDs. First ID: ${ids[0]}`);
 
@@ -191,6 +205,9 @@ export const Viewport = ({
             if (!renderingEngine) {
                 renderingEngine = new RenderingEngine(renderingEngineId);
             }
+
+            // Pre-fetch metadata for technical rendering parameters (pixel representation, transcale, etc.)
+            await prefetchMetadata(ids);
 
             const viewportInput: Types.PublicViewportInput = {
                 viewportId,
@@ -224,11 +241,40 @@ export const Viewport = ({
                 console.log(`Viewport [${viewportId}]: setStack complete`);
 
                 // Apply initial WW/WL from DICOM header (stored in database)
-                if (images[0]) {
-                    const imgDoc = images[0] as any;
-                    // Ensure values are numbers
-                    const wc = Number(imgDoc.windowCenter);
-                    const ww = Number(imgDoc.windowWidth);
+                // Apply initial WW/WL from DICOM header (stored in database)
+                // Prioritize the actual loaded image's metadata for VOI (Window/Level)
+                // This ensures we use the values corrected by electronLoader (Theoretical Range, cleaned strings)
+                // rather than potentially stale/malformed database values.
+                const currentId = ids[initialIndex];
+                const cachedImage = cache.getImage(currentId);
+
+                if (cachedImage && 'windowCenter' in cachedImage && 'windowWidth' in cachedImage) {
+                    // @ts-ignore
+                    const wc = cachedImage.windowCenter;
+                    // @ts-ignore
+                    const ww = cachedImage.windowWidth;
+
+                    if (typeof wc === 'number' && typeof ww === 'number') {
+                        viewport.setProperties({
+                            voiRange: {
+                                lower: wc - ww / 2,
+                                upper: wc + ww / 2,
+                            }
+                        });
+                        console.log(`Viewport [${viewportId}]: Applied VOI from Image: WC=${wc}, WW=${ww}`);
+                    }
+                } else if (images[initialIndex]) {
+                    // Fallback to database if image in cache doesn't have WW/WL
+                    const imgDoc = images[initialIndex] as any;
+
+                    const normalizeLutValue = (val: any): number => {
+                        if (Array.isArray(val)) return Number(val[0]);
+                        if (typeof val === 'string' && val.includes('\\')) return Number(val.split('\\')[0]);
+                        return Number(val);
+                    };
+
+                    const wc = normalizeLutValue(imgDoc.windowCenter);
+                    const ww = normalizeLutValue(imgDoc.windowWidth);
 
                     if (!isNaN(wc) && !isNaN(ww)) {
                         viewport.setProperties({
@@ -237,13 +283,7 @@ export const Viewport = ({
                                 upper: wc + ww / 2,
                             }
                         });
-                    } else {
-                        // Fallback logic if tags are missing/invalid
-                        // For CT, maybe default to soft tissue?
-                        // Or just let Cornerstone calculate from min/max pixel?
-                        // If users say it's "too white", usually it means it's showing full dynamic range of a CT (including air and bone) which makes soft tissue look white/flat.
-                        // We should try to guess based on modality if possible, otherwise rely on cornerstone.
-                        // But wait, the user's report is that it IS weird. So probably the tags are missing or ignored.
+                        console.log(`Viewport [${viewportId}]: Applied VOI from Database: WC=${wc}, WW=${ww}`);
                     }
                 }
 
@@ -252,18 +292,19 @@ export const Viewport = ({
 
                 const firstImage = cache.getImage(ids[0]);
                 if (firstImage) {
-                    const ds = (firstImage as any).data;
-                    const s = await db.T_Subseries.findOne(seriesUid).exec();
+                    const subseries = await db.T_Subseries.findOne(seriesUid).exec();
+                    const study = subseries ? await db.T_Study.findOne({ selector: { studyInstanceUID: subseries.studyInstanceUID } }).exec() : null;
+                    const patient = study ? await db.T_Patient.findOne({ selector: { id: study.patientId } }).exec() : null;
 
-                    // Update metadata
+                    // Update metadata using database records (pre-decoded) to avoid mojibake
                     setMetadata({
-                        patientName: String(ds?.string?.('x00100010') || ''),
-                        patientID: String(ds?.string?.('x00100020') || ''),
-                        institutionName: String(ds?.string?.('x00080080') || ''),
-                        studyDescription: String(ds?.string?.('x00081030') || ''),
-                        seriesNumber: s ? String(s.seriesNumber) : '',
-                        seriesDescription: String(ds?.string?.('x0008103e') || ''),
-                        modality: String(ds?.string?.('x00080060') || ''),
+                        patientName: patient ? patient.patientName : 'Anonymous',
+                        patientID: patient ? patient.patientID : 'Unknown',
+                        institutionName: study ? study.institutionName : '',
+                        studyDescription: study ? study.studyDescription : '',
+                        seriesNumber: subseries ? String(subseries.seriesNumber) : '',
+                        seriesDescription: subseries ? subseries.seriesDescription : '',
+                        modality: subseries ? subseries.modality : '',
                         instanceNumber: viewport.getCurrentImageIdIndex() + 1,
                         totalInstances: ids.length,
                         windowWidth: viewport.getProperties().voiRange ? (viewport.getProperties().voiRange!.upper - viewport.getProperties().voiRange!.lower) : 400,
@@ -291,7 +332,9 @@ export const Viewport = ({
         return () => {
             if (resizeObserver) resizeObserver.disconnect();
             const engine = getRenderingEngine(renderingEngineId);
-            if (engine) engine.disableElement(viewportId);
+            if (engine && engine.getViewport(viewportId)) {
+                engine.disableElement(viewportId);
+            }
         };
     }, [db, seriesUid, viewportId, renderingEngineId, isThumbnail]);
 
@@ -336,6 +379,15 @@ export const Viewport = ({
         <div className="w-full h-full relative bg-black group overflow-hidden">
             <div ref={elementRef} className="w-full h-full" onContextMenu={(e) => e.preventDefault()} />
 
+            {/* Active Highlight & Label */}
+            {isActive && (
+                <div className="absolute inset-0 pointer-events-none border border-horos-accent z-20 shadow-[inset_0_0_10px_rgba(37,99,235,0.2)]">
+                    <div className="absolute top-0 right-0 bg-horos-accent text-white text-[8px] font-black px-1.5 py-0.5 uppercase tracking-widest shadow-lg">
+                        Active
+                    </div>
+                </div>
+            )}
+
             {/* Vertical Paging Slider for multi-slice datasets (CT/MRI) */}
             {!isThumbnail && metadata.totalInstances > 1 && (
                 <VerticalPagingSlider
@@ -346,7 +398,20 @@ export const Viewport = ({
                 />
             )}
 
-            {!isThumbnail && showOverlays && <OverlayManager metadata={metadata} />}
+            {!isThumbnail && !seriesUid && (
+                <div className="absolute inset-0 flex items-center justify-center p-8 text-center pointer-events-none">
+                    <div className="flex flex-col items-center gap-4 text-white/20">
+                        <div className="w-12 h-12 rounded-full border-2 border-dashed border-white/10 flex items-center justify-center">
+                            <span className="text-xl">+</span>
+                        </div>
+                        <p className="text-[11px] font-medium leading-relaxed tracking-wide">
+                            表示するシリーズをクリック<br />orドラッグ&ドロップしてください
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {!isThumbnail && showOverlays && seriesUid && <OverlayManager metadata={metadata} />}
             {status && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20">
                     <div className="flex flex-col items-center gap-3">

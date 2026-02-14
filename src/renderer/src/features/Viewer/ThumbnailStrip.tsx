@@ -16,33 +16,37 @@ interface Props {
     studyUid?: string | null;
     selectedSeriesUid?: string | null;
     onSelect: (seriesUid: string | null) => void;
+    defaultCols?: number;
 }
 
-export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUid }: Props) => {
+export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUid, defaultCols = 2 }: Props) => {
     const { db, lastDeletionTime } = useDatabase();
     const [seriesList, setSeriesList] = useState<SeriesSummary[]>([]);
-    const [cols, setCols] = useState(4);
+    const [cols, setCols] = useState(defaultCols);
 
     useEffect(() => {
-        if (!db || !patientId) return;
+        if (!db || !patientId) {
+            // User Request: "If no data is selected, do not display."
+            // Immediately clear the list if patientId is null.
+            setSeriesList([]);
+            onSelect(null);
+            return;
+        }
 
         const fetchSeries = async () => {
-            let targetStudies: string[] = [];
+            // Fetch ALL studies for this patient, sorted by date descending
+            const studies = await db.T_Study.find({
+                selector: { patientId },
+                sort: [{ studyDate: 'desc' }]
+            }).exec();
 
-            if (studyUid) {
-                targetStudies = [studyUid];
-            } else {
-                const studies = await db.T_Study.find({
-                    selector: { patientId }
-                }).exec();
-                targetStudies = studies.map(s => s.studyInstanceUID);
-            }
-
-            if (targetStudies.length === 0) {
+            if (studies.length === 0) {
                 setSeriesList([]);
                 onSelect(null);
                 return;
             }
+
+            const targetStudies = studies.map(s => s.studyInstanceUID);
 
             const allSeries: SeriesSummary[] = [];
 
@@ -69,7 +73,7 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
 
                     allSeries.push({
                         seriesInstanceUID: s.seriesInstanceUID,
-                        seriesDescription: s.seriesDescription,
+                        seriesDescription: `${studies.find(sd => sd.studyInstanceUID === s.studyInstanceUID)?.studyDate || ''} - ${s.seriesDescription}`,
                         modality: s.modality,
                         seriesNumber: String(s.seriesNumber),
                         numImages: count,
@@ -111,7 +115,7 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                     <input
                         type="range"
                         min="2"
-                        max="6"
+                        max="7"
                         value={8 - cols}
                         onChange={(e) => setCols(8 - parseInt(e.target.value))}
                         className="w-16 h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-horos-accent"
@@ -129,6 +133,10 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                 {seriesList.map(series => (
                     <div
                         key={series.seriesInstanceUID}
+                        draggable
+                        onDragStart={(e) => {
+                            e.dataTransfer.setData('seriesUid', series.seriesInstanceUID);
+                        }}
                         onClick={() => onSelect(series.seriesInstanceUID)}
                         className={`
                             group cursor-pointer rounded-xl p-1.5 transition-all duration-300 relative flex flex-col items-center
@@ -153,29 +161,29 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                             {series.thumbnailImageId ? (
                                 <Viewport
                                     viewportId={`thumb-${series.seriesInstanceUID}`}
-                                    renderingEngineId={`thumb-engine-${series.seriesInstanceUID}`}
+                                    renderingEngineId="horos-engine"
                                     seriesUid={series.seriesInstanceUID}
                                     initialImageId={series.thumbnailImageId}
                                     isThumbnail={true}
                                 />
                             ) : (
                                 <div className="flex flex-col items-center">
-                                    <span className={`text-[${cols > 4 ? '10px' : '12px'}] font-black tracking-tighter mb-0.5 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white' : 'text-gray-600'}`}>{series.modality}</span>
-                                    <div className="text-[7px] font-bold text-gray-500">{series.numImages}</div>
+                                    <span className={`text-[${cols > 4 ? '10px' : '14px'}] font-black tracking-tighter mb-0.5 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white' : 'text-gray-600'}`}>{series.modality}</span>
+                                    <div className={`text-[${cols > 4 ? '7px' : '9px'}] font-bold text-gray-500`}>{series.numImages}</div>
                                 </div>
                             )}
 
                             {/* Label Overlay - Horos Style Glassmorphism */}
-                            <div className="absolute bottom-0 left-0 right-0 bg-black/70 backdrop-blur-md px-1.5 py-1 flex justify-between items-center z-10 border-t border-white/10">
-                                <span className={`text-[7px] font-black uppercase tracking-tighter ${selectedSeriesUid === series.seriesInstanceUID ? 'text-horos-accent' : 'text-white/90'}`}>{series.modality}</span>
-                                <span className="text-[7px] font-bold text-white/50">{series.numImages} Items</span>
+                            <div className="absolute bottom-0 left-0 right-0 bg-black/70 backdrop-blur-md px-1.5 py-1.5 flex justify-between items-center z-10 border-t border-white/10">
+                                <span className={`text-[${cols > 4 ? '7px' : '9px'}] font-black uppercase tracking-tighter ${selectedSeriesUid === series.seriesInstanceUID ? 'text-horos-accent' : 'text-white/90'}`}>{series.modality}</span>
+                                <span className={`text-[${cols > 4 ? '7px' : '9px'}] font-bold text-white/50`}>{series.numImages} Items</span>
                             </div>
                         </div>
 
                         {cols < 6 && (
                             <div className="w-full px-0.5 space-y-0 relative z-10 text-center">
                                 <div
-                                    className={`text-[${cols > 3 ? '8px' : '9px'}] font-black leading-tight truncate transition-colors duration-300 uppercase tracking-tighter
+                                    className={`text-[${cols > 3 ? '8px' : (cols === 1 ? '12px' : '10px')}] font-black leading-tight truncate transition-colors duration-300 uppercase tracking-tighter
                                         ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white' : 'text-gray-500 group-hover:text-gray-400'}
                                     `}
                                     title={series.seriesDescription}
@@ -183,7 +191,7 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                                     {series.seriesDescription || '(No Description)'}
                                 </div>
                                 <div className="flex justify-center items-center gap-1 mt-0.5">
-                                    <span className={`text-[7px] font-bold tracking-widest
+                                    <span className={`text-[${cols > 3 ? '7px' : '9px'}] font-bold tracking-widest
                                         ${selectedSeriesUid === series.seriesInstanceUID ? 'text-horos-accent' : 'text-gray-600'}
                                     `}>
                                         S. {series.seriesNumber}

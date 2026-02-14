@@ -1,9 +1,9 @@
+import { useState } from 'react';
 import {
     LayoutGrid,
     Box,
     Layers,
     Move,
-    Search,
     Sun,
     Ruler,
     Circle,
@@ -17,11 +17,19 @@ import {
     ArrowUpRight,
     Maximize,
     Link,
-    Unlink
+    Unlink,
+    Scissors,
+    RotateCw,
+    Type,
+    // Target, // Unused
+    AlignJustify,
+    Columns,
+    PanelRight
 } from 'lucide-react';
 import { CLUT_PRESETS } from './CLUTPresets';
+import { GridSelector } from './GridSelector';
 
-export type ViewMode = 'Database' | '2D' | 'MPR' | '3D' | 'PACS';
+export type ViewMode = 'Database' | '2D' | 'MPR' | '3D' | 'PACS' | 'Axial' | 'Coronal' | 'Sagittal';
 export type ToolMode =
     | 'WindowLevel'
     | 'Pan'
@@ -33,7 +41,8 @@ export type ToolMode =
     | 'Angle'
     | 'Arrow'
     | 'Bidirectional'
-    | 'Magnify';
+    | 'Magnify'
+    | 'Text';
 
 export type ProjectionMode = 'NORMAL' | 'MIP' | 'MINIP';
 export type ToolbarMode = 'DATABASE' | 'VIEWER';
@@ -59,6 +68,17 @@ interface Props {
     onProjectionModeChange?: (mode: ProjectionMode) => void;
     slabThickness?: number;
     onSlabThicknessChange?: (thickness: number) => void;
+    selectedSeriesUid?: string | null;
+    layout?: { rows: number; cols: number };
+    onLayoutChange?: (rows: number, cols: number) => void;
+    activeModality?: string | null;
+    // Phase D Props
+    isClipping?: boolean;
+    onClippingToggle?: () => void;
+    clippingRange?: number;
+    onClippingRangeChange?: (range: number) => void;
+    isAutoRotating?: boolean;
+    onAutoRotateToggle?: () => void;
 }
 
 export const Toolbar = ({
@@ -79,28 +99,106 @@ export const Toolbar = ({
     projectionMode = 'NORMAL',
     onProjectionModeChange,
     slabThickness = 0,
-    onSlabThicknessChange
+    onSlabThicknessChange,
+    layout = { rows: 1, cols: 1 },
+    onLayoutChange,
+    activeModality,
+    isClipping = false,
+    onClippingToggle,
+    clippingRange = 50,
+    onClippingRangeChange,
+    isAutoRotating = false,
+    onAutoRotateToggle
 }: Props) => {
 
-    const renderViewButton = (mode: ViewMode, Icon: any, label: string) => (
-        <button
-            onClick={() => onViewChange(mode)}
-            className={`
-                relative flex items-center justify-center h-8 px-4 rounded-lg transition-all duration-300 gap-2
-                ${activeView === mode
-                    ? 'bg-white text-horos-accent shadow-[0_2px_8px_rgba(0,0,0,0.08)] scale-[1.02] z-10'
-                    : 'text-gray-400 hover:text-gray-600'
+    const [showMPRControls, setShowMPRControls] = useState(false);
+
+    const renderViewButton = (mode: ViewMode, Icon: any, label: string) => {
+        const isMprOr3D = mode === 'MPR' || mode === '3D';
+        const isDisabled = !!(isMprOr3D && activeModality && ['CR', 'DX', 'MG', 'RF', 'XA'].includes(activeModality));
+
+        const handleClick = () => {
+            if (isDisabled) return;
+            if (mode === 'MPR') {
+                if (activeView === 'MPR') {
+                    setShowMPRControls(!showMPRControls);
+                } else {
+                    onViewChange(mode);
+                    setShowMPRControls(false); // Reset on new entry
                 }
-            `}
-            title={label}
-        >
-            <Icon size={16} strokeWidth={activeView === mode ? 2.5 : 2} />
-            <span className={`text-[11px] font-bold tracking-tight ${activeView === mode ? 'opacity-100' : 'opacity-60'}`}>{label}</span>
-            {activeView === mode && (
-                <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-horos-accent animate-in fade-in zoom-in duration-500" />
-            )}
-        </button>
-    );
+            } else {
+                onViewChange(mode);
+                setShowMPRControls(false);
+            }
+        };
+
+        return (
+            <div className="relative">
+                <button
+                    onClick={handleClick}
+                    disabled={isDisabled}
+                    className={`
+                    relative flex flex-col items-center justify-center min-w-[52px] h-[52px] rounded-lg transition-all duration-300 gap-1
+                    ${activeView === mode
+                            ? 'bg-white text-horos-accent shadow-[0_2px_8px_rgba(0,0,0,0.08)] scale-[1.02] z-10'
+                            : isDisabled
+                                ? 'text-gray-200 cursor-not-allowed opacity-30'
+                                : 'text-gray-400 hover:text-gray-600 hover:bg-black/5'}
+                `}
+                    title={isDisabled ? `${label} (Not supported for ${activeModality})` : label}
+                >
+                    <Icon size={18} strokeWidth={activeView === mode ? 2.5 : 2} />
+                    <span className={`text-[10px] font-black uppercase tracking-tighter ${activeView === mode ? 'opacity-100' : 'opacity-60'}`}>{label}</span>
+                    {activeView === mode && (
+                        <div className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-horos-accent animate-in fade-in zoom-in duration-500" />
+                    )}
+                </button>
+
+                {/* MPR Controls Popup */}
+                {mode === 'MPR' && activeView === 'MPR' && showMPRControls && (
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-white/90 backdrop-blur-md border border-gray-200 shadow-xl rounded-xl p-3 z-50 animate-in fade-in zoom-in-95 duration-200 w-64 flex flex-col gap-3">
+                        {/* Triangle Arrow */}
+                        <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white rotate-45 border-t border-l border-gray-200" />
+
+                        {/* Projection Mode */}
+                        <div className="flex bg-gray-100/50 p-1 rounded-lg gap-0.5">
+                            {(['NORMAL', 'MIP', 'MINIP'] as ProjectionMode[]).map((m) => (
+                                <button
+                                    key={m}
+                                    onClick={() => onProjectionModeChange?.(m)}
+                                    className={`
+                                            flex-1 py-1.5 text-[9px] font-black rounded-md transition-all tracking-wider
+                                            ${projectionMode === m
+                                            ? 'bg-white text-horos-accent shadow-sm'
+                                            : 'text-gray-400 hover:text-gray-600 hover:bg-black/5'}
+                                        `}
+                                >
+                                    {m}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Slab Thickness */}
+                        <div className="flex flex-col gap-1">
+                            <div className="flex justify-between items-center px-1">
+                                <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider">Slab Thickness</span>
+                                <span className="text-[10px] font-black text-horos-accent">{slabThickness} mm</span>
+                            </div>
+                            <input
+                                type="range"
+                                min="0"
+                                max="50"
+                                step="1"
+                                value={slabThickness}
+                                onChange={(e) => onSlabThicknessChange?.(parseInt(e.target.value))}
+                                className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-horos-accent hover:accent-blue-600"
+                            />
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
 
     const renderToolButton = (tool: ToolMode, Icon: any, label: string) => (
         <button
@@ -141,6 +239,7 @@ export const Toolbar = ({
                     <div className="flex-1 min-w-[20px] h-full" />
 
                     <div className="flex items-center gap-6">
+                        {/* Import Button */}
                         <button
                             onClick={onImport}
                             className="group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1 bg-white hover:bg-gray-50 text-gray-600 border border-[#c0c0c0] shadow-sm hover:scale-105 active:scale-95"
@@ -179,11 +278,23 @@ export const Toolbar = ({
                 </div>
             ) : (
                 <div className="flex-1 flex items-center pl-8 pr-8 no-drag">
-                    {/* View Modes */}
+                    {/* Database & PACS Navigation (Persistent) */}
                     <div className="flex bg-[#000000]/5 p-0.5 rounded-lg gap-0.5 mr-6 border border-[#000000]/10 shadow-inner">
+                        {renderViewButton('Database', Database, 'Local DB')}
+                        {renderViewButton('PACS', Database, 'PACS')}
+                    </div>
+
+                    <div className="h-10 w-[1.5px] bg-[#000000]/15 mr-6 shadow-[1px_0_0_rgba(255,255,255,0.4)]" />
+
+                    {/* View Modes & Grid Selector */}
+                    <div className="flex bg-[#000000]/5 p-0.5 rounded-lg gap-0.5 mr-6 border border-[#000000]/10 shadow-inner">
+                        {onLayoutChange && <GridSelector currentLayout={layout} onChange={onLayoutChange} />}
                         {renderViewButton('2D', Layers, '2D')}
+                        {renderViewButton('Axial', AlignJustify, 'Axial')}
+                        {renderViewButton('Coronal', Columns, 'Coronal')}
+                        {renderViewButton('Sagittal', PanelRight, 'Sagittal')}
                         {renderViewButton('MPR', LayoutGrid, 'MPR')}
-                        {renderViewButton('3D', Box, '3D VR')}
+                        {/* {renderViewButton('3D', Box, '3D')} */}
                     </div>
 
                     <div className="h-10 w-[1.5px] bg-[#000000]/15 mr-6 shadow-[1px_0_0_rgba(255,255,255,0.4)]" />
@@ -192,7 +303,6 @@ export const Toolbar = ({
                     <div className="flex gap-1 mr-6 relative">
                         {renderToolButton('WindowLevel', Sun, 'W/L')}
                         {renderToolButton('Pan', Move, 'Pan')}
-                        {renderToolButton('Zoom', Search, 'Zoom')}
                         {renderToolButton('Magnify', Maximize, 'Mag')}
                     </div>
 
@@ -205,7 +315,8 @@ export const Toolbar = ({
                         {renderToolButton('Rectangle', Square, 'Rect')}
                         {renderToolButton('Ellipse', Circle, 'Oval')}
                         {renderToolButton('Probe', Crosshair, 'Probe')}
-                        {renderToolButton('Arrow', ArrowUpRight, 'Note')}
+                        {renderToolButton('Arrow', ArrowUpRight, 'Arrow')}
+                        {renderToolButton('Text', Type, 'Text')}
                     </div>
 
                     <div className="h-10 w-[1.5px] bg-[#000000]/15 mr-6 shadow-[1px_0_0_rgba(255,255,255,0.4)]" />
@@ -250,45 +361,53 @@ export const Toolbar = ({
                     <div className="flex-1 min-w-[20px] h-full" />
 
                     {/* Phase 4: MPR Tools */}
-                    {activeView === 'MPR' && (
-                        <div className="flex items-center gap-6 animate-in fade-in slide-in-from-left-8 duration-700">
-                            <div className="flex bg-gray-50/50 p-1 rounded-xl gap-0.5 border border-gray-100">
-                                {(['NORMAL', 'MIP', 'MINIP'] as ProjectionMode[]).map((mode) => (
-                                    <button
-                                        key={mode}
-                                        onClick={() => onProjectionModeChange?.(mode)}
-                                        className={`
-                                            px-3 py-1 text-[8px] font-black rounded-lg transition-all tracking-[0.1em]
-                                            ${projectionMode === mode
-                                                ? 'bg-white text-horos-accent shadow-sm border border-gray-100'
-                                                : 'text-gray-300 hover:text-gray-500'}
-                                        `}
-                                    >
-                                        {mode}
-                                    </button>
-                                ))}
+                    {/* Phase 4: MPR Tools (Moved to Popover) */}
+
+                    {/* Phase D: 3D Visualization Tools */}
+                    {activeView === '3D' && (
+                        <div className="flex items-center gap-6 animate-in fade-in slide-in-from-left-8 duration-700 border-l border-gray-200 pl-6 ml-6">
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={onClippingToggle}
+                                    className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl transition-all duration-300 gap-1 ${isClipping ? 'bg-red-50 text-red-500 shadow-inner' : 'text-gray-400 hover:bg-gray-50'}`}
+                                    title="VR Volume Clipping"
+                                >
+                                    <Scissors size={16} />
+                                    <span className="text-[8px] font-black uppercase tracking-widest">Clip</span>
+                                </button>
+
+                                <button
+                                    onClick={onAutoRotateToggle}
+                                    className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl transition-all duration-300 gap-1 ${isAutoRotating ? 'bg-indigo-50 text-indigo-500 shadow-inner' : 'text-gray-400 hover:bg-gray-50'}`}
+                                    title="Auto-Rotate Volume"
+                                >
+                                    <RotateCw size={16} className={isAutoRotating ? 'animate-spin' : ''} style={{ animationDuration: '3s' }} />
+                                    <span className="text-[8px] font-black uppercase tracking-widest">Rotate</span>
+                                </button>
                             </div>
 
-                            <div className="flex flex-col w-32 relative">
-                                <div className="flex justify-between items-end mb-1 px-0.5">
-                                    <span className="text-[7px] text-gray-300 uppercase font-black tracking-[0.2em]">Slab</span>
-                                    <div className="flex items-baseline gap-0.5">
-                                        <span className="text-xs font-black text-horos-accent drop-shadow-sm">{slabThickness}</span>
-                                        <span className="text-[7px] font-bold text-gray-400">MM</span>
+                            {isClipping && (
+                                <div className="flex flex-col w-32 relative animate-in zoom-in slide-in-from-left-4 duration-300">
+                                    <div className="flex justify-between items-end mb-1 px-0.5">
+                                        <span className="text-[7px] text-gray-400 uppercase font-black tracking-[0.2em]">Crop</span>
+                                        <div className="flex items-baseline gap-0.5">
+                                            <span className="text-xs font-black text-red-500 drop-shadow-sm">{clippingRange}</span>
+                                            <span className="text-[7px] font-bold text-gray-400">%</span>
+                                        </div>
+                                    </div>
+                                    <div className="relative h-4 flex items-center">
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max="100"
+                                            step="1"
+                                            value={clippingRange}
+                                            onChange={(e) => onClippingRangeChange?.(parseInt(e.target.value))}
+                                            className="w-full h-1 bg-gray-100 rounded-full appearance-none cursor-pointer accent-red-500 hover:h-1.5 transition-all z-10"
+                                        />
                                     </div>
                                 </div>
-                                <div className="relative h-4 flex items-center">
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="50"
-                                        step="1"
-                                        value={slabThickness}
-                                        onChange={(e) => onSlabThicknessChange?.(parseInt(e.target.value))}
-                                        className="w-full h-1 bg-gray-100 rounded-full appearance-none cursor-pointer accent-horos-accent hover:h-1.5 transition-all z-10"
-                                    />
-                                </div>
-                            </div>
+                            )}
                         </div>
                     )}
                 </div>
