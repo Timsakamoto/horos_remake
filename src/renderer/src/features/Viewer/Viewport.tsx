@@ -22,6 +22,7 @@ interface Props {
     viewportId: string;
     renderingEngineId: string;
     seriesUid: string | null;
+    initialImageId?: string | null;
     isThumbnail?: boolean;
     activeTool?: ToolMode;
     activeCLUT?: string;
@@ -36,6 +37,7 @@ export const Viewport = ({
     viewportId,
     renderingEngineId,
     seriesUid,
+    initialImageId = null,
     isThumbnail = false,
     activeTool = 'WindowLevel',
     activeCLUT = 'Default',
@@ -206,7 +208,19 @@ export const Viewport = ({
             }
 
             try {
-                await viewport.setStack(ids);
+                let initialIndex = 0;
+                if (initialImageId) {
+                    // Find the index of the initial image in the stack
+                    // IDs are constructed with 'electronfile:' prefix, so we check inclusion
+                    // We normalize slashes to be safe
+                    const normalizedTarget = initialImageId.replace(/\\/g, '/');
+                    const index = ids.findIndex(id => id.replace(/\\/g, '/').includes(normalizedTarget));
+                    if (index !== -1) {
+                        initialIndex = index;
+                    }
+                }
+
+                await viewport.setStack(ids, initialIndex);
                 console.log(`Viewport [${viewportId}]: setStack complete`);
 
                 // Apply initial WW/WL from DICOM header (stored in database)

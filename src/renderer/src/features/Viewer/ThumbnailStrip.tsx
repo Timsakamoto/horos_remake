@@ -155,6 +155,7 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                                     viewportId={`thumb-${series.seriesInstanceUID}`}
                                     renderingEngineId={`thumb-engine-${series.seriesInstanceUID}`}
                                     seriesUid={series.seriesInstanceUID}
+                                    initialImageId={series.thumbnailImageId}
                                     isThumbnail={true}
                                 />
                             ) : (

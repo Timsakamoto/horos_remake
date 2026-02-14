@@ -95,6 +95,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'c' && hoveredCell) {
+                console.log('Copy triggered for:', hoveredCell);
                 e.preventDefault();
                 navigator.clipboard.writeText(hoveredCell.value).then(() => {
                     setShowCopyFeedback(true);
@@ -331,16 +332,16 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                 onClick={() => togglePatient(patient.id)}
                                 className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_0.8fr_1fr_1fr_32px] px-4 py-1.5 cursor-default transition-all items-center text-[11px] group border-b border-[#f0f0f0] ${selectedPatientId === patient.id ? 'bg-[#387aff] text-white' : 'hover:bg-blue-50/50'}`}
                             >
-                                <div className="flex items-center gap-1.5 font-bold truncate">
+                                <div
+                                    className="flex items-center gap-1.5 font-bold truncate cursor-text"
+                                    onMouseEnter={() => setHoveredCell({ type: 'patientName', value: patient.patientName || '' })}
+                                    onMouseLeave={() => setHoveredCell(null)}
+                                >
                                     <div className={`w-4 flex items-center justify-center ${selectedPatientId === patient.id ? 'text-white' : 'text-gray-400'}`}>
                                         {expandedPatients.has(patient.id) ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                                     </div>
                                     {patient._isStudy ? <Calendar size={13} className={selectedPatientId === patient.id ? 'text-white' : 'text-orange-500/80'} /> : <User size={13} className={selectedPatientId === patient.id ? 'text-white' : 'text-horos-accent/70'} />}
-                                    <span
-                                        className="cursor-text"
-                                        onMouseEnter={() => setHoveredCell({ type: 'patientName', value: patient.patientName || '' })}
-                                        onMouseLeave={() => setHoveredCell(null)}
-                                    >
+                                    <span>
                                         {patient.patientName || (patient._isStudy ? '(Unknown Patient)' : '')}
                                     </span>
                                 </div>
@@ -410,13 +411,13 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                             }}
                                             className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_0.8fr_1fr_1fr_32px] px-4 py-0.5 cursor-default text-[10px] items-center border-l-[3px] ml-6 group/series transition-all ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-horos-accent text-white border-blue-600' : 'hover:bg-gray-100 text-gray-600 border-transparent'}`}
                                         >
-                                            <div className="flex items-center gap-1.5 pl-4 truncate">
+                                            <div
+                                                className="flex items-center gap-1.5 pl-4 truncate cursor-text"
+                                                onMouseEnter={() => setHoveredCell({ type: 'seriesDescription', value: series.seriesDescription || '' })}
+                                                onMouseLeave={() => setHoveredCell(null)}
+                                            >
                                                 <Activity size={10} className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'} />
-                                                <span
-                                                    className="font-medium cursor-text"
-                                                    onMouseEnter={() => setHoveredCell({ type: 'seriesDescription', value: series.seriesDescription || '' })}
-                                                    onMouseLeave={() => setHoveredCell(null)}
-                                                >
+                                                <span className="font-medium">
                                                     {series.seriesDescription || `Series ${series.seriesNumber}`}
                                                 </span>
                                             </div>
