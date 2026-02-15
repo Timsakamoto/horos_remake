@@ -12,6 +12,18 @@
         "preview": "vite preview",
         "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
     },
+    "build": {
+        "appId": "com.antigravity.peregrine",
+        "mac": {
+            "icon": "build/icon.png"
+        },
+        "win": {
+            "icon": "build/icon.png"
+        },
+        "linux": {
+            "icon": "build/icon.png"
+        }
+    },
     "dependencies": {
         "@cornerstonejs/calculate-suv": "^1.1.0",
         "@cornerstonejs/codec-charls": "^1.2.3",

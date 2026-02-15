@@ -461,10 +461,13 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
             // Set Initial VOI from first cached image metadata
             const firstId = firstImageIdRef.current;
             const voi = firstId ? metaData.get('voiLutModule', firstId) : null;
-            let c = 40, w = 400;
+            let c = 0, w = 1;
             if (voi && voi.windowCenter != null) {
                 c = Number(Array.isArray(voi.windowCenter) ? voi.windowCenter[0] : voi.windowCenter);
                 w = Number(Array.isArray(voi.windowWidth) ? voi.windowWidth[0] : voi.windowWidth);
+            } else {
+                // Fallback: If no metadata, default to a wide range
+                c = 127; w = 255;
             }
 
             activeIds.forEach(id => {
@@ -482,21 +485,24 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
 
             // Configure Crosshairs Tool
             if (tg && orientation === 'MPR') {
-                tg.addTool(CrosshairsTool.toolName, {
-                    viewportScrolled: true,
-                    getChildViewports: (viewportId: string) => {
-                        return [AXIAL_VIEWPORT_ID, SAGITTAL_VIEWPORT_ID, CORONAL_VIEWPORT_ID].filter(id => id !== viewportId);
-                    },
-                    getReferenceLineColor: (viewportId: string) => {
-                        if (viewportId === AXIAL_VIEWPORT_ID) return 'rgb(59, 130, 246)'; // blue-500
-                        if (viewportId === SAGITTAL_VIEWPORT_ID) return 'rgb(234, 179, 8)'; // yellow-500
-                        if (viewportId === CORONAL_VIEWPORT_ID) return 'rgb(34, 197, 94)'; // green-500
-                        return 'rgb(255, 255, 255)';
-                    },
-                    getReferenceLineControllable: () => true,
-                    getReferenceLineDraggable: () => true,
-                    getReferenceLineSlabThicknessControlsOn: () => true,
-                });
+                const crosshairsName = CrosshairsTool.toolName;
+                if (!tg.hasTool(crosshairsName)) {
+                    tg.addTool(crosshairsName, {
+                        viewportScrolled: true,
+                        getChildViewports: (viewportId: string) => {
+                            return [AXIAL_VIEWPORT_ID, SAGITTAL_VIEWPORT_ID, CORONAL_VIEWPORT_ID].filter(id => id !== viewportId);
+                        },
+                        getReferenceLineColor: (viewportId: string) => {
+                            if (viewportId === AXIAL_VIEWPORT_ID) return 'rgb(59, 130, 246)'; // blue-500
+                            if (viewportId === SAGITTAL_VIEWPORT_ID) return 'rgb(234, 179, 8)'; // yellow-500
+                            if (viewportId === CORONAL_VIEWPORT_ID) return 'rgb(34, 197, 94)'; // green-500
+                            return 'rgb(255, 255, 255)';
+                        },
+                        getReferenceLineControllable: () => false, // Disable rotation/oblique
+                        getReferenceLineDraggable: () => true, // Allow position sync via dragging center
+                        getReferenceLineSlabThicknessControlsOn: () => false, // Disable slab handles
+                    });
+                }
             }
 
             re.render();

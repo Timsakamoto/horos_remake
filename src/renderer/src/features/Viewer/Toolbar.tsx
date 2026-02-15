@@ -44,6 +44,20 @@ export type ToolMode =
     | 'Crosshairs'
     | 'Text';
 
+export interface WWLPreset {
+    name: string;
+    windowWidth: number;
+    windowCenter: number;
+}
+
+export const WWL_PRESETS: WWLPreset[] = [
+    { name: 'Soft Tissue', windowWidth: 350, windowCenter: 50 },
+    { name: 'Abdomen', windowWidth: 500, windowCenter: 100 },
+    { name: 'Mediastinum', windowWidth: 1000, windowCenter: 200 },
+    { name: 'Lung', windowWidth: 1500, windowCenter: -500 },
+    { name: 'Bone', windowWidth: 2000, windowCenter: 400 },
+];
+
 export type ProjectionMode = 'NORMAL' | 'MIP' | 'MINIP';
 export type ToolbarMode = 'DATABASE' | 'VIEWER';
 
@@ -79,6 +93,10 @@ interface Props {
     onClippingRangeChange?: (range: number) => void;
     isAutoRotating?: boolean;
     onAutoRotateToggle?: () => void;
+    // Overlay Props
+    showOverlays?: boolean;
+    onToggleOverlays?: () => void;
+    onPresetSelect?: (preset: WWLPreset) => void;
 }
 
 export const Toolbar = ({
@@ -108,10 +126,14 @@ export const Toolbar = ({
     clippingRange = 50,
     onClippingRangeChange,
     isAutoRotating = false,
-    onAutoRotateToggle
+    onAutoRotateToggle,
+    showOverlays = true,
+    onToggleOverlays,
+    onPresetSelect
 }: Props) => {
 
     const [showMPRControls, setShowMPRControls] = useState(false);
+    const [showWLPresets, setShowWLPresets] = useState(false);
 
     const renderViewButton = (mode: ViewMode, Icon: any, label: string) => {
         const isMprOr3D = mode === 'MPR' || mode === '3D';
@@ -230,7 +252,10 @@ export const Toolbar = ({
             onDoubleClick={() => (window as any).electron?.toggleMaximize()}
             className="h-24 bg-gradient-to-b from-[#e8e8e8] to-[#c2c2c2] border-b border-[#a0a0a0] flex flex-col pt-8 select-none z-40 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] drag"
         >
+            {/* ... (Database Mode Block) ... */}
+
             {mode === 'DATABASE' ? (
+                // ... (Existing Database JSX) ...
                 <div className="flex-1 flex items-center pl-8 pr-8 no-drag">
                     <div className="flex bg-[#000000]/5 p-0.5 rounded-lg gap-0.5 border border-[#000000]/10 shadow-inner">
                         {renderViewButton('Database', Database, 'Local DB')}
@@ -295,7 +320,6 @@ export const Toolbar = ({
                         {renderViewButton('Coronal', Columns, 'Coronal')}
                         {renderViewButton('Sagittal', PanelRight, 'Sagittal')}
                         {renderViewButton('MPR', LayoutGrid, 'MPR')}
-                        {/* {renderViewButton('3D', Box, '3D')} */}
                     </div>
 
                     <div className="h-10 w-[1.5px] bg-[#000000]/15 mr-6 shadow-[1px_0_0_rgba(255,255,255,0.4)]" />
@@ -303,7 +327,60 @@ export const Toolbar = ({
                     {/* Standard Tools Group */}
                     <div className="flex gap-1 mr-6 relative">
                         {activeView === 'MPR' && renderToolButton('Crosshairs', Crosshair, 'Sync')}
-                        {renderToolButton('WindowLevel', Sun, 'W/L')}
+
+                        <div className="relative">
+                            <button
+                                onClick={() => {
+                                    if (activeTool === 'WindowLevel') {
+                                        setShowWLPresets(!showWLPresets);
+                                    } else {
+                                        onToolChange('WindowLevel');
+                                        setShowWLPresets(false);
+                                    }
+                                }}
+                                className={`
+                                    group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1.5
+                                    ${activeTool === 'WindowLevel'
+                                        ? 'bg-blue-50/50 text-peregrine-accent shadow-inner'
+                                        : 'text-gray-400 hover:bg-gray-50 hover:text-gray-600'
+                                    }
+                                `}
+                                title="Window/Level (Click again for presets)"
+                            >
+                                <div className={`p-2 rounded-lg transition-all duration-300 ${activeTool === 'WindowLevel' ? 'scale-110' : 'group-hover:scale-110'}`}>
+                                    <Sun size={18} strokeWidth={activeTool === 'WindowLevel' ? 2.5 : 2} />
+                                </div>
+                                <span className="text-[9px] font-black uppercase tracking-widest text-[#8e8e93]">W/L</span>
+                            </button>
+
+                            {/* WW/WL Presets Popover */}
+                            {activeTool === 'WindowLevel' && showWLPresets && (
+                                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-white/95 backdrop-blur-md border border-gray-200 shadow-2xl rounded-xl p-2 z-50 animate-in fade-in zoom-in-95 duration-200 min-w-[140px] flex flex-col gap-0.5">
+                                    <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white/95 rotate-45 border-t border-l border-gray-200" />
+
+                                    <div className="px-2 py-1.5 border-b border-gray-100 mb-1">
+                                        <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Presets (WW/WL)</span>
+                                    </div>
+
+                                    {WWL_PRESETS.map(preset => (
+                                        <button
+                                            key={preset.name}
+                                            onClick={() => {
+                                                onPresetSelect?.(preset);
+                                                setShowWLPresets(false);
+                                            }}
+                                            className="w-full text-left px-3 py-2 text-[10px] font-bold text-gray-600 hover:bg-peregrine-accent hover:text-white rounded-lg transition-all flex justify-between items-baseline group/item"
+                                        >
+                                            <span className="truncate mr-4">{preset.name}</span>
+                                            <span className="text-[8px] opacity-60 group-hover/item:opacity-100 tabular-nums">
+                                                {preset.windowWidth}/{preset.windowCenter}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
                         {renderToolButton('Pan', Move, 'Pan')}
                         {renderToolButton('Magnify', Maximize, 'Mag')}
                     </div>
@@ -319,6 +396,24 @@ export const Toolbar = ({
                         {renderToolButton('Probe', Crosshair, 'Probe')}
                         {renderToolButton('Arrow', ArrowUpRight, 'Arrow')}
                         {renderToolButton('Text', Type, 'Text')}
+
+                        {/* Overlay Toggle Button */}
+                        <button
+                            onClick={onToggleOverlays}
+                            className={`
+                                group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1.5
+                                ${showOverlays
+                                    ? 'bg-blue-50/50 text-peregrine-accent shadow-inner'
+                                    : 'text-gray-400 hover:bg-gray-50 hover:text-gray-600'
+                                }
+                            `}
+                            title="Toggle Overlays (Tab)"
+                        >
+                            <div className={`p-2 rounded-lg transition-all duration-300 ${showOverlays ? 'scale-110' : 'group-hover:scale-110'}`}>
+                                <Type size={18} strokeWidth={showOverlays ? 2.5 : 2} />
+                            </div>
+                            <span className="text-[9px] font-black uppercase tracking-widest">Info</span>
+                        </button>
                     </div>
 
                     <div className="h-10 w-[1.5px] bg-[#000000]/15 mr-6 shadow-[1px_0_0_rgba(255,255,255,0.4)]" />

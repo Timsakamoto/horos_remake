@@ -11,6 +11,8 @@ interface SeriesSummary {
     seriesNumber: string;
     numImages: number;
     thumbnailImageId: string | null;
+    windowCenter?: number;
+    windowWidth?: number;
 }
 
 interface Props {
@@ -58,82 +60,89 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
         }
 
         const fetchSeries = async () => {
-            let targetStudyUids: string[] = [];
-            let studies: any[] = [];
-
             console.log(`ThumbnailStrip: Starting fetchSeries. patientId="${patientId}", studyUid="${studyUid}"`);
 
+            // 1. Fetch relevant studies
+            let studies: any[] = [];
             if (studyUid) {
-                targetStudyUids = [studyUid];
                 const s = await db.T_Study.findOne({ selector: { studyInstanceUID: studyUid } }).exec();
-                if (s) {
-                    studies = [s];
-                    console.log(`ThumbnailStrip: Found specific study ${studyUid}`);
-                } else {
-                    console.warn(`ThumbnailStrip: Specific study ${studyUid} NOT found. Falling back to all studies for patient.`);
+                if (s) studies = [s];
+                else {
                     studies = await db.T_Study.find({
                         selector: { patientId },
                         sort: [{ studyDate: 'desc' }]
                     }).exec();
-                    targetStudyUids = studies.map(st => st.studyInstanceUID);
                 }
             } else {
                 studies = await db.T_Study.find({
                     selector: { patientId },
                     sort: [{ studyDate: 'desc' }]
                 }).exec();
-                console.log(`ThumbnailStrip: Found ${studies.length} studies for patient ${patientId}`);
-                targetStudyUids = studies.map(s => s.studyInstanceUID);
             }
 
-            if (targetStudyUids.length === 0) {
+            if (studies.length === 0) {
                 setSeriesList([]);
                 onSelect(null);
                 return;
             }
 
-            const allSeries: SeriesSummary[] = [];
+            // 2. Fetch all series for all target studies at once
+            const studyUids = studies.map(st => st.studyInstanceUID);
+            const seriesDocs = await db.T_Subseries.find({
+                selector: { studyInstanceUID: { $in: studyUids } },
+                sort: [{ seriesNumber: 'asc' }]
+            }).exec();
 
-            for (const sUid of targetStudyUids) {
-                const seriesDocs = await db.T_Subseries.find({
-                    selector: { studyInstanceUID: sUid },
-                    sort: [{ seriesNumber: 'asc' }]
+            console.log(`ThumbnailStrip: Processing ${seriesDocs.length} series in parallel...`);
+
+            // 3. Process series in PARALLEL to avoid serial await bottlenecks
+            const allSeries: SeriesSummary[] = await Promise.all(seriesDocs.map(async (s) => {
+                // Fetch ONLY the first image for the thumbnail (fastest)
+                const firstImage = await db.T_FilePath.findOne({
+                    selector: { seriesInstanceUID: s.seriesInstanceUID },
+                    sort: [{ instanceNumber: 'asc' }]
                 }).exec();
 
-                console.log(`ThumbnailStrip: Found ${seriesDocs.length} series for study ${sUid}`);
+                const parentStudy = studies.find(sd => sd.studyInstanceUID === s.studyInstanceUID);
 
-                for (const s of seriesDocs) {
-                    const count = await db.T_FilePath.count({
-                        selector: { seriesInstanceUID: s.seriesInstanceUID }
-                    }).exec();
-
-                    const middleIndex = Math.floor(count / 2);
-                    const middleImageDocs = await db.T_FilePath.find({
-                        selector: { seriesInstanceUID: s.seriesInstanceUID },
-                        sort: [{ instanceNumber: 'asc' }],
-                        skip: middleIndex,
-                        limit: 1
-                    }).exec();
-                    const middleImage = middleImageDocs[0];
-
-                    const parentStudy = studies.find(sd => sd.studyInstanceUID === s.studyInstanceUID);
-
-                    let thumbPath = middleImage ? middleImage.filePath : null;
-                    if (thumbPath && !(thumbPath.startsWith('/') || /^[a-zA-Z]:/.test(thumbPath)) && databasePath) {
-                        const sep = databasePath.includes('\\') ? '\\' : '/';
-                        thumbPath = `${databasePath.replace(/[\\/]$/, '')}${sep}${thumbPath.replace(/^[\\/]/, '')}`;
-                    }
-
-                    allSeries.push({
-                        seriesInstanceUID: s.seriesInstanceUID,
-                        seriesDescription: `${parentStudy?.studyDate || ''} - ${s.seriesDescription}`,
-                        modality: s.modality,
-                        seriesNumber: String(s.seriesNumber),
-                        numImages: count,
-                        thumbnailImageId: thumbPath
-                    });
+                let thumbPath = firstImage ? firstImage.filePath : null;
+                if (thumbPath && !(thumbPath.startsWith('/') || /^[a-zA-Z]:/.test(thumbPath)) && databasePath) {
+                    const sep = databasePath.includes('\\') ? '\\' : '/';
+                    thumbPath = `${databasePath.replace(/[\\/]$/, '')}${sep}${thumbPath.replace(/^[\\/]/, '')}`;
                 }
-            }
+
+                // Normalize WW/WL
+                let wc: number | undefined;
+                let ww: number | undefined;
+
+                if (firstImage) {
+                    const normalize = (val: any) => {
+                        if (Array.isArray(val)) return Number(val[0]);
+                        if (typeof val === 'string' && val.includes('\\')) return Number(val.split('\\')[0]);
+                        return Number(val);
+                    };
+                    const c = normalize(firstImage.windowCenter);
+                    const w = normalize(firstImage.windowWidth);
+                    if (!isNaN(c) && !isNaN(w)) {
+                        wc = c;
+                        ww = w;
+                    }
+                }
+
+                return {
+                    seriesInstanceUID: s.seriesInstanceUID,
+                    seriesDescription: `${parentStudy?.studyDate || ''} - ${s.seriesDescription}`,
+                    modality: s.modality,
+                    seriesNumber: String(s.seriesNumber),
+                    numImages: s.numberOfSeriesRelatedInstances || 0, // Using recorded count
+                    thumbnailImageId: thumbPath,
+                    windowCenter: wc,
+                    windowWidth: ww
+                } as SeriesSummary;
+            }));
+
+            // Sort by series number as Promise.all result might be in order of completion (though array map preserves order)
+            // Actually it preserves order, but we can re-sort if needed.
 
             setSeriesList(allSeries);
 
@@ -144,7 +153,6 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                     onSelect(allSeries[0].seriesInstanceUID);
                 }
             } else {
-                // If no series found (e.g. after deletion), clear selection
                 onSelect(null);
             }
         };
@@ -191,6 +199,7 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                         draggable
                         onDragStart={(e) => {
                             e.dataTransfer.setData('seriesUid', series.seriesInstanceUID);
+                            e.dataTransfer.setData('text/plain', series.seriesInstanceUID); // Fallback for robustness
                         }}
                         onClick={() => onSelect(series.seriesInstanceUID)}
                         onContextMenu={(e) => {
@@ -224,6 +233,8 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                                     seriesUid={series.seriesInstanceUID}
                                     initialImageId={series.thumbnailImageId}
                                     isThumbnail={true}
+                                    initialWindowCenter={series.windowCenter}
+                                    initialWindowWidth={series.windowWidth}
                                 />
                             ) : (
                                 <div className="flex flex-col items-center">

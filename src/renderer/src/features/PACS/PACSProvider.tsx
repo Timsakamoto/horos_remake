@@ -166,25 +166,25 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
 
     // Health Monitoring (C-ECHO)
     useEffect(() => {
-        const checkHealth = async () => {
-            const updatedServers = await Promise.all(servers.map(async (s) => {
-                if (s.isDicomWeb) return { ...s, status: 'online' as const };
-                try {
-                    const online = await window.electron.pacs.echo({
-                        aeTitle: s.aeTitle,
-                        address: s.address,
-                        port: s.port
-                    });
-                    return { ...s, status: online ? 'online' as const : 'offline' as const };
-                } catch (e) {
-                    return { ...s, status: 'offline' as const };
-                }
-            }));
-            setServersState(updatedServers);
-        };
+        // const checkHealth = async () => {
+        //     const updatedServers = await Promise.all(servers.map(async (s) => {
+        //         if (s.isDicomWeb) return { ...s, status: 'online' as const };
+        //         try {
+        //             const online = await window.electron.pacs.echo({
+        //                 aeTitle: s.aeTitle,
+        //                 address: s.address,
+        //                 port: s.port
+        //             });
+        //             return { ...s, status: online ? 'online' as const : 'offline' as const };
+        //         } catch (e) {
+        //             return { ...s, status: 'offline' as const };
+        //         }
+        //     }));
+        //     setServersState(updatedServers);
+        // };
 
-        checkHealth(); // Initial check
-        healthCheckIntervalRef.current = setInterval(checkHealth, 30000); // Every 30s
+        // checkHealth(); // Initial check
+        // healthCheckIntervalRef.current = setInterval(checkHealth, 30000); // Every 30s
 
         return () => {
             if (healthCheckIntervalRef.current) clearInterval(healthCheckIntervalRef.current);

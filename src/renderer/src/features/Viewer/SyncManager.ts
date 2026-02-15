@@ -105,11 +105,16 @@ export const anatomicalSyncCallback = (
         const newIndex = targetImageIds.indexOf(closestImageId);
 
         if (newIndex !== -1) {
-            // console.log(`Sync [${sourceViewport.id}] -> [${targetViewport.id}]: Jumping to index ${newIndex}, dist=${minDistance}`);
+            // Perform Scan
             stackTarget.setImageIdIndex(newIndex);
+
+            // Restore "Always Fit" behavior requested by user
+            stackTarget.resetCamera();
+
+            stackTarget.render();
         }
     }
-};
+}
 
 export const createSynchronizers = () => {
     // 1. Image Slice Synchronizer
@@ -161,8 +166,8 @@ export const triggerInitialSync = (renderingEngineId: string, targetViewportId: 
     const synchronizer = SynchronizerManager.getSynchronizer(SYNC_GROUP_ID);
     if (!synchronizer) return;
 
-    // Use current viewports in the synchronizer
-    const syncedViewports = (synchronizer as any).viewports;
+    // Resilient access to viewports list
+    const syncedViewports = (synchronizer as any).getViewports?.() || (synchronizer as any).viewports || (synchronizer as any)._viewports;
     if (!syncedViewports || !Array.isArray(syncedViewports)) return;
 
     // Try to find a source viewport that is NOT the target

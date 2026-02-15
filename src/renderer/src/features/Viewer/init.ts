@@ -1,3 +1,4 @@
+import * as cornerstoneTools from '@cornerstonejs/tools';
 import * as cornerstone from '@cornerstonejs/core';
 import {
     init as csRenderInit,
@@ -98,5 +99,7 @@ export const initCornerstone = async () => {
     );
 
     isInitialized = true;
+    (window as any).cornerstone = cornerstone;
+    (window as any).cornerstoneTools = cornerstoneTools;
     console.log('Cornerstone: Initialization Complete.');
 };

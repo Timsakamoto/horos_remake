@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { Activity } from 'lucide-react';
 import { ThumbnailStrip } from './features/Viewer/ThumbnailStrip';
 import { Viewport } from './features/Viewer/Viewport';
@@ -55,127 +55,6 @@ const AppContent = () => {
     const [clippingRange, setClippingRange] = useState(50); // 0-100%
     const [isAutoRotating, setIsAutoRotating] = useState(false);
 
-    const [viewportOrientations, setViewportOrientations] = useState<{ [key: number]: 'Axial' | 'Coronal' | 'Sagittal' | 'Default' }>({});
-
-    // Added for Tab Toggle
-    const [showOverlays, setShowOverlays] = useState(true);
-
-    const [viewportVoiOverrides, setViewportVoiOverrides] = useState<{ [key: number]: { windowWidth: number; windowCenter: number } | null }>({});
-
-    // Helper to find adjacent series
-    const switchSeries = async (direction: 'next' | 'prev') => {
-        if (!db || !selectedStudyUid) return;
-
-        const activeSeriesUid = viewports[activeViewportIndex]?.seriesUid;
-        if (!activeSeriesUid) return;
-
-        // Fetch all series for this study, sorted by number
-        const seriesList = await db.T_Subseries.find({
-            selector: { studyInstanceUID: selectedStudyUid },
-            sort: [{ seriesNumber: 'asc' }]
-        }).exec();
-
-        if (!seriesList || seriesList.length === 0) return;
-
-        const currentIndex = seriesList.findIndex(s => s.seriesInstanceUID === activeSeriesUid);
-        if (currentIndex === -1) return;
-
-        let newIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
-
-        // Clamp index
-        if (newIndex < 0) newIndex = 0;
-        if (newIndex >= seriesList.length) newIndex = seriesList.length - 1;
-
-        if (newIndex !== currentIndex) {
-            const newSeriesUid = seriesList[newIndex].seriesInstanceUID;
-            onSeriesSelect(newSeriesUid);
-        }
-    };
-
-    const handleKeyDownGlobal = async (e: KeyboardEvent) => {
-        // Ignore inputs
-        if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
-
-        // Tab: Toggle Overlays
-        if (e.key === 'Tab') {
-            e.preventDefault(); // Prevent focus switching
-            setShowOverlays(prev => !prev);
-            return;
-        }
-
-        // Arrow Keys for Active Viewport
-        if (appMode === 'VIEWER') {
-            const engine = (window as any).cornerstone?.getRenderingEngine('peregrine-engine');
-            if (!engine) return;
-
-            let viewportId = viewports[activeViewportIndex]?.id;
-
-            // In MPR mode, there isn't a single "active" index in the same grid sense,
-            // but we can default to the Axial viewport for paging if in MPR.
-            if (activeView === 'MPR' || activeView === 'Axial') viewportId = 'axial-viewport';
-            else if (activeView === 'Sagittal') viewportId = 'sagittal-viewport';
-            else if (activeView === 'Coronal') viewportId = 'coronal-viewport';
-
-            const viewport = engine.getViewport(viewportId);
-
-            if (viewport) {
-                if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    const delta = e.key === 'ArrowUp' ? -1 : 1;
-
-                    if ('setImageIdIndex' in viewport) {
-                        // Stack Viewport
-                        const vp = viewport as any;
-                        const current = vp.getCurrentImageIdIndex();
-                        const total = vp.getImageIds().length;
-                        const next = current + delta;
-                        if (next >= 0 && next < total) {
-                            vp.setImageIdIndex(next);
-                        } else {
-                            switchSeries(delta < 0 ? 'prev' : 'next');
-                        }
-                    } else if ('getSliceIndex' in viewport) {
-                        // Volume Viewport
-                        const vp = viewport as any;
-                        const current = vp.getSliceIndex();
-                        const total = vp.getNumberOfSlices();
-                        const next = current + delta;
-                        if (next >= 0 && next < total) {
-                            // Using delta scroll is safer for volumes
-                            const { utilities: csToolsUtils } = (window as any).cornerstoneTools || {};
-                            if (csToolsUtils?.scroll) {
-                                csToolsUtils.scroll(vp, { delta });
-                            } else {
-                                // Fallback to setSliceIndex if utilities not available
-                                vp.setSliceIndex(next);
-                            }
-                        } else if (activeView !== 'MPR' && activeView !== 'Axial' && activeView !== 'Sagittal' && activeView !== 'Coronal') {
-                            // Only switch series in 2D mode
-                            switchSeries(delta < 0 ? 'prev' : 'next');
-                        }
-                    }
-                    viewport.render();
-                } else if (e.key === 'ArrowLeft') {
-                    e.preventDefault();
-                    await switchSeries('prev');
-                } else if (e.key === 'ArrowRight') {
-                    e.preventDefault();
-                    await switchSeries('next');
-                }
-            }
-        }
-
-        // Existing Tool Shortcuts
-        switch (e.key.toLowerCase()) {
-            case 'w': setActiveTool('WindowLevel'); break;
-            case 'z': setActiveTool('Zoom'); break;
-            case 'p': setActiveTool('Pan'); break;
-            case 'l': setActiveTool('Length'); break;
-            case 'm': setActiveTool('Magnify'); break;
-        }
-    };
-
-    // 1. Initialization Effect (Runs ONCE on mount/db)
     useEffect(() => {
         const prepare = async () => {
             await initCornerstone();
@@ -183,25 +62,61 @@ const AppContent = () => {
         };
         prepare();
 
-        // Handle URL parameters...
+        // Keyboard Shortcuts
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Ignore if typing in an input
+            if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
+                return;
+            }
+
+            switch (e.key.toLowerCase()) {
+                case 'w':
+                    setActiveTool('WindowLevel');
+                    break;
+                case 'z':
+                    setActiveTool('Zoom');
+                    break;
+                case 'p':
+                    setActiveTool('Pan');
+                    break;
+                case 'l':
+                    setActiveTool('Length');
+                    break;
+                case 'm':
+                    setActiveTool('Magnify');
+                    break;
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+
+        // Handle URL parameters for Test Item 8.1 (Launch in new window)
         const params = new URLSearchParams(window.location.search);
         const view = params.get('view');
         const seriesUid = params.get('seriesUid');
 
         if (view === 'viewer' && seriesUid && db) {
             const initViewer = async () => {
-                // ... (existing logic)
-                // Re-implementing existing init logic briefly for context match if needed, but replace block handles it
-                if (!db) return;
+                if (!db) return; // TS Check
+
                 try {
-                    const seriesDoc = await db.T_Subseries.findOne({ selector: { seriesInstanceUID: seriesUid } }).exec();
+                    // Fetch series info to get study and patient context
+                    const seriesDoc = await db.T_Subseries.findOne({
+                        selector: { seriesInstanceUID: seriesUid }
+                    }).exec();
+
                     if (seriesDoc) {
-                        const studyDoc = await db.T_Study.findOne({ selector: { studyInstanceUID: seriesDoc.studyInstanceUID } }).exec();
+                        const studyDoc = await db.T_Study.findOne({
+                            selector: { studyInstanceUID: seriesDoc.studyInstanceUID }
+                        }).exec();
+
                         if (studyDoc) {
                             setSelectedPatientId(studyDoc.patientId);
                             setSelectedStudyUid(studyDoc.studyInstanceUID);
                         }
                     }
+
+                    // Set viewer states
                     setViewports(prev => {
                         const next = [...prev];
                         next[0] = { ...next[0], seriesUid };
@@ -209,20 +124,18 @@ const AppContent = () => {
                     });
                     setAppMode('VIEWER');
                     setActiveView('2D');
-                } catch (err) { console.error(err); }
+                    console.log(`App: Launched in Viewer mode for series ${seriesUid}`);
+                } catch (err) {
+                    console.error('App: Failed to initialize viewer from URL params:', err);
+                }
             };
             initViewer();
         }
-    }, [db]); // Only re-run if DB connection changes
 
-    // 2. Global Key Handler Effect (Re-binds when state changes)
-    useEffect(() => {
-        window.addEventListener('keydown', handleKeyDownGlobal);
         return () => {
-            window.removeEventListener('keydown', handleKeyDownGlobal);
+            window.removeEventListener('keydown', handleKeyDown);
         };
-    }, [db, activeViewportIndex, viewports, selectedStudyUid, appMode]);
-
+    }, [db]);
 
     const handleLayoutChange = (rows: number, cols: number) => {
         setLayout({ rows, cols });
@@ -241,33 +154,11 @@ const AppContent = () => {
             if (handled) return; // Window will be closed by main process
         }
 
-        if (view === 'Axial' || view === 'Coronal' || view === 'Sagittal') {
-            setViewportOrientations(prev => ({
-                ...prev,
-                [activeViewportIndex]: view
-            }));
-
-            if (activeView === 'Database' || activeView === 'PACS') {
-                setActiveView('2D');
-                setAppMode('VIEWER');
-            }
-            return;
-        }
-
-        if (view === '2D' && activeView !== '2D') {
-            // Reset orientations when explicitly clicking 2D to "Default" all viewports?
-            // Or maybe keep them? Usually, clicking 2D means "Go back to grid".
-            // Let's keep them so the user can see their custom orientations in the grid.
-        }
-
         setActiveView(view);
         if (view === 'Database' || view === 'PACS') {
             setAppMode('DATABASE');
         } else {
             setAppMode('VIEWER');
-            if (view === 'MPR') {
-                setActiveTool('Crosshairs');
-            }
         }
     };
 
@@ -294,11 +185,10 @@ const AppContent = () => {
             });
         }
     };
+
     const onOpenSettings = () => setShowSettings(true);
     const toggleCinePlaying = () => setIsCinePlaying(prev => !prev);
     const toggleIsSynced = () => setIsSynced(prev => !prev);
-
-    const [dropZone, setDropZone] = useState<{ index: number; position: 'top' | 'bottom' | 'left' | 'right' | 'center' } | null>(null);
 
     const onDragOver = (e: React.DragEvent) => {
         e.preventDefault();
@@ -308,256 +198,12 @@ const AppContent = () => {
     const onDrop = async (e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        setDropZone(null);
 
         const files = Array.from(e.dataTransfer.files);
         const paths = files.map(f => (f as any).path).filter(Boolean);
 
         if (paths.length > 0) {
             await importPaths(paths);
-        }
-    };
-
-    // Drag and Drop Handlers for Viewport (Smart Grid)
-    const handleViewportDragOver = (e: React.DragEvent, index: number) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        // Only allow Smart Grid expansion if dragging a series thumbnail
-        // Note: HTML5 dnd converts types to lowercase in the types array
-        if (!e.dataTransfer.types.includes('seriesuid')) {
-            return;
-        }
-
-        e.dataTransfer.dropEffect = 'copy';
-
-        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        const width = rect.width;
-        const height = rect.height;
-
-        const EDGE_THRESHOLD = 0.25;
-        let position: 'top' | 'bottom' | 'left' | 'right' | 'center' = 'center';
-
-        const canExpandCol = layout.cols < 4;
-        const canExpandRow = layout.rows < 3;
-
-        const relX = x / width;
-        const relY = y / height;
-
-        const distLeft = relX;
-        const distRight = 1 - relX;
-        const distTop = relY;
-        const distBottom = 1 - relY;
-
-        const min = Math.min(distLeft, distRight, distTop, distBottom);
-
-        if (min < EDGE_THRESHOLD) {
-            if (min === distLeft && canExpandCol) position = 'left';
-            else if (min === distRight && canExpandCol) position = 'right';
-            else if (min === distTop && canExpandRow) position = 'top';
-            else if (min === distBottom && canExpandRow) position = 'bottom';
-        }
-
-        // Optimization: Only update state if changed to prevent render flood
-        if (dropZone?.index !== index || dropZone?.position !== position) {
-            setDropZone({ index, position });
-        }
-    };
-
-    const handleViewportDrop = (e: React.DragEvent, index: number) => {
-        try {
-            e.preventDefault();
-            e.stopPropagation();
-
-            // Clean up drop zone state immediately
-            const currentDropZone = dropZone;
-            setDropZone(null);
-
-            const seriesUid = e.dataTransfer.getData('seriesUid') || e.dataTransfer.getData('seriesuid') || e.dataTransfer.getData('text/plain');
-            console.log(`[App] EventType=${e.type} | Viewport=${index} | DropSeries=${seriesUid}`);
-
-            if (!seriesUid) return;
-
-            // Scenario 1: Simple Replace (Center Drop or No Expansion possible)
-            if (!currentDropZone || currentDropZone.index !== index || currentDropZone.position === 'center') {
-                // CRITICAL FIX: Check state BEFORE scheduling update to prevent loops
-                if (viewports[index].seriesUid === seriesUid) {
-                    console.log(`[App] SKIP: Series already set (Pre-Check).`);
-                    return;
-                }
-
-                setViewports(prev => {
-                    const next = [...prev];
-                    const currentSeries = next[index].seriesUid;
-
-                    // internal double-check
-                    if (currentSeries === seriesUid) {
-                        return prev;
-                    }
-
-                    next[index] = { ...next[index], seriesUid };
-                    console.log(`[App] Setting viewport ${index} series to ${seriesUid}`);
-                    return next;
-                });
-                setActiveViewportIndex(index);
-                return;
-            }
-
-            // Scenario 2: Smart Grid Expansion
-            const { position } = currentDropZone;
-            const { cols, rows } = layout;
-
-            const curR = Math.floor(index / cols);
-            const curC = index % cols;
-
-            let newCols = cols;
-            let newRows = rows;
-            let insertIndices = { r: -1, c: -1 };
-
-            if (position === 'left') {
-                newCols++;
-                insertIndices = { r: curR, c: curC };
-            } else if (position === 'right') {
-                newCols++;
-                insertIndices = { r: curR, c: curC + 1 };
-            } else if (position === 'top') {
-                newRows++;
-                insertIndices = { r: curR, c: curC };
-            } else if (position === 'bottom') {
-                newRows++;
-                insertIndices = { r: curR + 1, c: curC };
-            }
-
-            // Cap grid size to 4x3 to prevent layout breakage
-            if (newCols > 4) newCols = 4;
-            if (newRows > 3) newRows = 3;
-
-            const nextViewports = new Array(12).fill(null).map((_, i) => ({ id: `vp-${i}`, seriesUid: null as string | null }));
-
-            for (let r = 0; r < rows; r++) {
-                for (let c = 0; c < cols; c++) {
-                    const oldIdx = r * cols + c;
-                    const existing = viewports[oldIdx];
-
-                    if (!existing || !existing.seriesUid) continue;
-
-                    let targetR = r;
-                    let targetC = c;
-
-                    // Adjust target coordinates based on insertion
-                    if (position === 'left' && c >= insertIndices.c) targetC++;
-                    else if (position === 'right' && c >= insertIndices.c) targetC++;
-                    else if (position === 'top' && r >= insertIndices.r) targetR++;
-                    else if (position === 'bottom' && r >= insertIndices.r) targetR++;
-
-                    // Check bounds for target
-                    if (targetC >= newCols) continue;
-                    if (targetR >= newRows) continue;
-
-                    const newIdx = targetR * newCols + targetC;
-                    if (newIdx < 12) {
-                        nextViewports[newIdx] = { ...nextViewports[newIdx], seriesUid: existing.seriesUid };
-                    }
-                }
-            }
-
-            const newSeriesIdx = insertIndices.r * newCols + insertIndices.c;
-            if (newSeriesIdx < 12 && newSeriesIdx >= 0) {
-                nextViewports[newSeriesIdx] = { ...nextViewports[newSeriesIdx], seriesUid };
-            }
-
-            console.log(`[App] Smart Grid Expansion: ${rows}x${cols} -> ${newRows}x${newCols}`);
-            setLayout({ rows: newRows, cols: newCols });
-            setViewports(nextViewports);
-            setActiveViewportIndex(newSeriesIdx);
-
-        } catch (err) {
-            console.error('Drag drop error:', err);
-            setDropZone(null); // Ensure cleanup
-        }
-    };
-
-    // Right Double-Click Removal Logic
-    const lastRightClick = useRef<{ time: number, index: number } | null>(null);
-
-    const handleViewportRightClick = (e: React.MouseEvent, index: number) => {
-        e.preventDefault(); // Disable context menu
-        e.stopPropagation();
-
-        // Prevent removal if only 1x1
-        if (layout.rows === 1 && layout.cols === 1) return;
-
-        const now = Date.now();
-        const DOUBLE_CLICK_THRESHOLD = 300; // ms
-
-        if (lastRightClick.current &&
-            lastRightClick.current.index === index &&
-            (now - lastRightClick.current.time) < DOUBLE_CLICK_THRESHOLD) {
-
-            // Detected Right Double-Click
-            removeViewport(index);
-            lastRightClick.current = null;
-        } else {
-            lastRightClick.current = { time: now, index };
-        }
-    };
-
-    const removeViewport = (indexToRemove: number) => {
-        // 1. Extract current series UIDs
-        const currentSeries = viewports.map(vp => vp.seriesUid);
-
-        // 2. Remove the series at the target index and packing (shift left)
-        const updatedSeriesList = [
-            ...currentSeries.slice(0, indexToRemove),
-            ...currentSeries.slice(indexToRemove + 1)
-        ];
-
-        // Pad with nulls to maintain 12 slots
-        while (updatedSeriesList.length < 12) {
-            updatedSeriesList.push(null);
-        }
-
-        // 3. Update Viewports State
-        const nextViewports = viewports.map((vp, i) => ({
-            ...vp,
-            seriesUid: updatedSeriesList[i]
-        }));
-        setViewports(nextViewports);
-
-        // 4. Auto-Resize Grid (Shrink Rows AND Cols to optimize space)
-        const activeCount = updatedSeriesList.filter(uid => uid !== null).length;
-        let { rows, cols } = layout;
-
-        // Iteratively try to reduce dimensions while maintaining all active items
-        let canReduce = true;
-        while (canReduce) {
-            canReduce = false;
-
-            // Try reducing rows (Priority 1 for LTR packing)
-            if (rows > 1 && activeCount <= (rows - 1) * cols) {
-                rows--;
-                canReduce = true;
-            }
-            // Try reducing cols
-            else if (cols > 1 && activeCount <= rows * (cols - 1)) {
-                cols--;
-                canReduce = true;
-            }
-        }
-
-        if (rows !== layout.rows || cols !== layout.cols) {
-            setLayout({ rows, cols });
-        }
-
-        // Determine new active index
-        // If we removed the active one, select the one at the same index (now shifted) or the last valid one.
-        if (activeViewportIndex === indexToRemove) {
-            const newActive = activeCount > 0 ? Math.min(indexToRemove, activeCount - 1) : 0;
-            setActiveViewportIndex(newActive);
-        } else if (activeViewportIndex > indexToRemove) {
-            setActiveViewportIndex(activeViewportIndex - 1);
         }
     };
 
@@ -577,11 +223,8 @@ const AppContent = () => {
 
     if (!isInitReady) {
         return (
-            <div
-                className="flex h-screen w-screen bg-black text-white font-sans overflow-hidden select-none"
-                onDragEnd={() => setDropZone(null)} // Global cleanup for drag operations
-            >
-                <div className="flex flex-col items-center justify-center">
+            <div className="flex h-screen bg-peregrine-bg items-center justify-center">
+                <div className="flex flex-col items-center gap-4">
                     <div className="w-10 h-10 border-4 border-peregrine-accent border-t-transparent rounded-full animate-spin" />
                     <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Initializing Cornerstone...</span>
                 </div>
@@ -594,7 +237,6 @@ const AppContent = () => {
             className="flex flex-col h-screen bg-peregrine-bg overflow-hidden text-peregrine-text antialiased font-sans"
             onDrop={onDrop}
             onDragOver={onDragOver}
-            onDragEnd={() => setDropZone(null)}
         >
             <Toolbar
                 mode={appMode}
@@ -624,14 +266,6 @@ const AppContent = () => {
                 onClippingRangeChange={setClippingRange}
                 isAutoRotating={isAutoRotating}
                 onAutoRotateToggle={() => setIsAutoRotating(!isAutoRotating)}
-                showOverlays={showOverlays}
-                onToggleOverlays={() => setShowOverlays(prev => !prev)}
-                onPresetSelect={(preset) => {
-                    setViewportVoiOverrides(prev => ({
-                        ...prev,
-                        [activeViewportIndex]: preset
-                    }));
-                }}
             />
 
             <div className="flex flex-1 overflow-hidden relative">
@@ -772,45 +406,32 @@ const AppContent = () => {
                                                 : 'opacity-90 hover:opacity-100 hover:ring-1 hover:ring-white/10'
                                                 }`}
                                             onClick={() => setActiveViewportIndex(index)}
-                                            onContextMenu={(e) => handleViewportRightClick(e, index)}
-                                            onDragOver={(e) => handleViewportDragOver(e, index)}
-                                            onDrop={(e) => handleViewportDrop(e, index)}
+                                            onDragOver={(e) => {
+                                                e.preventDefault(); // Required to allow drop
+                                                e.dataTransfer.dropEffect = 'copy';
+                                            }}
+                                            onDrop={(e) => {
+                                                e.preventDefault();
+                                                const seriesUid = e.dataTransfer.getData('seriesUid');
+                                                if (seriesUid) {
+                                                    setViewports(prev => {
+                                                        const next = [...prev];
+                                                        next[index] = { ...next[index], seriesUid };
+                                                        return next;
+                                                    });
+                                                    setActiveViewportIndex(index);
+                                                }
+                                            }}
                                         >
-                                            {/* Smart Drop Zone Indicator */}
-                                            {dropZone && dropZone.index === index && dropZone.position !== 'center' && (
-                                                <div className={`absolute z-50 bg-peregrine-accent/50 border-2 border-peregrine-accent transition-all duration-150 animate-in fade-in pointer-events-none
-                                                    ${dropZone.position === 'left' ? 'top-0 left-0 bottom-0 w-1/4' : ''}
-                                                    ${dropZone.position === 'right' ? 'top-0 right-0 bottom-0 w-1/4' : ''}
-                                                    ${dropZone.position === 'top' ? 'top-0 left-0 right-0 h-1/4' : ''}
-                                                    ${dropZone.position === 'bottom' ? 'bottom-0 left-0 right-0 h-1/4' : ''}
-                                                `}>
-                                                    <div className="w-full h-full flex items-center justify-center">
-                                                        <div className="w-6 h-6 rounded-full bg-white text-peregrine-accent flex items-center justify-center font-black text-xs shadow-md">
-                                                            +
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            {dropZone && dropZone.index === index && dropZone.position === 'center' && (
-                                                <div className="absolute inset-0 z-50 bg-peregrine-accent/20 border-2 border-peregrine-accent animate-pulse pointer-events-none" />
-                                            )}
-
                                             <Viewport
                                                 viewportId={vp.id}
                                                 renderingEngineId="peregrine-engine"
                                                 seriesUid={vp.seriesUid}
                                                 activeTool={activeTool}
-                                                isSynced={isSynced && (!viewportOrientations[index] || viewportOrientations[index] === 'Default')} // Disable sync if re-oriented (MPR display unlinked)
+                                                activeCLUT={activeCLUT}
+                                                isSynced={isSynced}
                                                 isCinePlaying={isCinePlaying}
                                                 isActive={activeViewportIndex === index}
-                                                orientation={viewportOrientations[index] || 'Default'}
-                                                voiOverride={viewportVoiOverrides[index]}
-                                                onVoiChange={() => {
-                                                    // Clear override once the user manually adjusts
-                                                    if (viewportVoiOverrides[index]) {
-                                                        setViewportVoiOverrides(prev => ({ ...prev, [index]: null }));
-                                                    }
-                                                }}
                                             />
                                         </div>
                                     ))}

@@ -5,6 +5,8 @@ import {
     type Types,
     getRenderingEngine,
     cache,
+    metaData,
+    volumeLoader,
 } from '@cornerstonejs/core';
 import {
     ToolGroupManager,
@@ -20,7 +22,6 @@ import {
     ProbeTool,
     ArrowAnnotateTool,
     BidirectionalTool,
-
 } from '@cornerstonejs/tools';
 import { useDatabase } from '../Database/DatabaseProvider';
 import { useSettings } from '../Settings/SettingsContext';
@@ -48,9 +49,17 @@ interface Props {
     showOverlays?: boolean;
     isActive?: boolean;
     autoFit?: boolean;
+    orientation?: 'Axial' | 'Coronal' | 'Sagittal' | 'Default';
+    initialWindowWidth?: number;
+    initialWindowCenter?: number;
+    voiOverride?: { windowWidth: number; windowCenter: number } | null;
+    onVoiChange?: () => void;
 }
 
 const TOOL_GROUP_ID = 'main-tool-group';
+
+// Global cache to persist WW/WL per series across viewport instances (e.g., during grid changes)
+const globalVoiCache = new Map<string, Types.VOIRange>();
 
 export const Viewport = ({
     viewportId,
@@ -64,14 +73,22 @@ export const Viewport = ({
     isCinePlaying = false,
     showOverlays = true,
     isActive = false,
-    autoFit = false
+    autoFit = false,
+    orientation = 'Default',
+    initialWindowWidth,
+    initialWindowCenter,
+    voiOverride,
+    onVoiChange
 }: Props) => {
+    // ... [Lines 70-349 unchanged] ...
+
     const elementRef = useRef<HTMLDivElement>(null);
     const { db } = useDatabase();
     const { databasePath } = useSettings();
     const [status, setStatus] = useState<string>('');
     const [metadata, setMetadata] = useState<any>({});
     const [isReady, setIsReady] = useState(false);
+    const manualVoiRange = useRef<Types.VOIRange | null>(null);
 
     // 1. Initialize Tools & Loader
     useEffect(() => {
@@ -83,7 +100,7 @@ export const Viewport = ({
         const allTools = [
             'WindowLevel', 'Pan', 'Zoom', 'StackScroll', 'StackScrollMouseWheel',
             'Length', 'EllipticalROI', 'RectangleROI', 'Probe', 'Angle',
-            'ArrowAnnotate', 'CobbAngle', 'Bidirectional', 'Magnify'
+            'ArrowAnnotate', 'CobbAngle', 'Bidirectional', 'Magnify', 'Crosshairs'
         ];
 
         allTools.forEach(toolName => {
@@ -91,9 +108,44 @@ export const Viewport = ({
                 toolGroup.addTool(toolName);
             }
         });
+
+        // Ensure Reference Lines Tool is disabled by default but available
+        // toolGroup?.setToolDisabled(ReferenceLinesTool.toolName);
+
     }, []);
 
-    // 2. Handle Tool Switching
+    // 8. Handle Reference Lines Toggle
+    // useEffect(() => {
+    //     if (!isReady || isThumbnail) return;
+
+    //     const toolGroup = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
+    //     if (!toolGroup) return;
+
+    //     let synchronizer = SynchronizerManager.getSynchronizer(REFERENCE_LINES_SYNC_ID);
+    //     if (!synchronizer) {
+    //         synchronizer = SynchronizerManager.createSynchronizer(
+    //             REFERENCE_LINES_SYNC_ID,
+    //             Enums.Events.CAMERA_MODIFIED,
+    //             (_synchronizerInstance, _sourceViewport, _targetViewport) => {
+    //                  // No-op for actual sync, we just want the event to drive ref lines?
+    //                  // Actually ReferenceLinesTool expects the viewports to be in a synchronizer so it can draw.
+    //                  // It typically listens to sync events or just existence in the sync group.
+    //                  // The tool itself handles the drawing.
+    //             }
+    //         );
+    //     }
+
+    //     if (showReferenceLines) {
+    //         toolGroup.setToolEnabled(ReferenceLinesTool.toolName);
+    //         synchronizer?.add({ renderingEngineId, viewportId });
+    //     } else {
+    //         toolGroup.setToolDisabled(ReferenceLinesTool.toolName);
+    //         synchronizer?.remove({ renderingEngineId, viewportId });
+    //     }
+
+    // }, [showReferenceLines, isReady, isThumbnail, renderingEngineId, viewportId]);
+
+    // 7. Handle Orientation Changes
     useEffect(() => {
         const toolGroup = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
         if (!toolGroup || isThumbnail) return;
@@ -145,13 +197,21 @@ export const Viewport = ({
 
     }, [activeTool, isThumbnail]);
 
+    // 4. Force unique internal ID for Cornerstone to prevent cache collision on re-use
+    // const uniqueId = useRef(`${viewportId}-${Date.now()}`).current;
+
+    useEffect(() => {
+        console.log(`[Viewport] MOUNTED: ${viewportId} with SeriesUID: ${seriesUid}`);
+        return () => console.log(`[Viewport] UNMOUNTED: ${viewportId}`);
+    }, [viewportId, seriesUid]);
+
     // 3. Handle CLUT Changes
     useEffect(() => {
         if (!isReady) return;
         const engine = getRenderingEngine(renderingEngineId);
         if (!engine) return;
 
-        const viewport = engine.getViewport(viewportId) as Types.IStackViewport;
+        const viewport = engine.getViewport(viewportId) as Types.IStackViewport | Types.IVolumeViewport;
         if (!viewport) return;
 
         const preset = CLUT_PRESETS.find(p => p.name === activeCLUT);
@@ -192,6 +252,31 @@ export const Viewport = ({
         }
     }, [isCinePlaying, viewportId, renderingEngineId, isThumbnail, isReady]);
 
+    // 4.6 Apply VOI Override from Props (Presets)
+    useEffect(() => {
+        if (!isReady || !voiOverride || isThumbnail) return;
+
+        const engine = getRenderingEngine(renderingEngineId);
+        const viewport = engine?.getViewport(viewportId) as Types.IStackViewport | Types.IVolumeViewport;
+        if (viewport) {
+            const voiRange = {
+                lower: voiOverride.windowCenter - voiOverride.windowWidth / 2,
+                upper: voiOverride.windowCenter + voiOverride.windowWidth / 2,
+            };
+            viewport.setProperties({ voiRange });
+            viewport.render();
+
+            // Sync to cache so it sticks
+            if (seriesUid) {
+                globalVoiCache.set(seriesUid, voiRange);
+                manualVoiRange.current = voiRange;
+
+                // Notify parent that the override has been "consumed" (applied)
+                onVoiChange?.();
+            }
+        }
+    }, [voiOverride, isReady, isThumbnail, renderingEngineId, viewportId, seriesUid, onVoiChange]);
+
     // 6. Load Images
     useEffect(() => {
         if (!db || !seriesUid) return;
@@ -199,7 +284,12 @@ export const Viewport = ({
         let resizeObserver: ResizeObserver | null = null;
 
         const loadSeries = async () => {
+            console.log(`Viewport ${viewportId}: loadSeries start`, seriesUid);
             if (!elementRef.current) return;
+
+            // YIELD: Allow UI to update (remove drag overlay) before starting heavy load
+            await new Promise(resolve => setTimeout(resolve, 10));
+
             setIsReady(false);
             setStatus('Loading Series...');
 
@@ -252,19 +342,21 @@ export const Viewport = ({
 
             if (!elementRef.current) return;
 
+            const isVolumeOrientation = !isThumbnail && (orientation === 'Coronal' || orientation === 'Sagittal');
+
             const viewportInput: Types.PublicViewportInput = {
                 viewportId,
-                type: ViewportType.STACK,
+                type: isVolumeOrientation ? ViewportType.ORTHOGRAPHIC : ViewportType.STACK,
                 element: elementRef.current,
                 defaultOptions: { background: [0, 0, 0] },
             };
 
             renderingEngine.enableElement(viewportInput);
             setIsReady(true);
-            const viewport = renderingEngine.getViewport(viewportId) as Types.IStackViewport;
 
+            // Register tools for the specific viewport
+            const toolGroup = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
             if (!isThumbnail) {
-                const toolGroup = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
                 toolGroup?.addViewport(viewportId, renderingEngineId);
             }
 
@@ -281,70 +373,110 @@ export const Viewport = ({
                     }
                 }
 
-                await viewport.setStack(ids, initialIndex);
+                if (isVolumeOrientation) {
+                    const viewport = renderingEngine.getViewport(viewportId) as Types.IVolumeViewport;
+                    const volumeId = `volume-${seriesUid}-${viewportId}`;
+                    const volume = await volumeLoader.createAndCacheVolume(volumeId, { imageIds: ids });
+                    await volume.load();
+                    await viewport.setVolumes([{ volumeId }]);
+                    const orientationKey = orientation.toUpperCase() as keyof typeof Enums.OrientationAxis;
+                    viewport.setOrientation(Enums.OrientationAxis[orientationKey]);
+                } else {
+                    const viewport = renderingEngine.getViewport(viewportId) as Types.IStackViewport;
+                    await viewport.setStack(ids, initialIndex);
+                }
+
+                const viewport = renderingEngine.getViewport(viewportId) as Types.IStackViewport | Types.IVolumeViewport;
 
                 // Immediate synchronization on load
                 if (!isThumbnail) {
                     try {
+                        addViewportToSync(viewportId, renderingEngineId);
                         triggerInitialSync(renderingEngineId, viewportId);
                     } catch (syncErr) {
                         console.warn('Initial synchronization failed:', syncErr);
                     }
                 }
 
-                // Apply initial WW/WL from DICOM header (stored in database)
-                // Prioritize the actual loaded image's metadata for VOI (Window/Level)
-                const currentId = ids[initialIndex];
-                const cachedImage = cache.getImage(currentId);
+                // VOI application will happen inside the timeout below to ensure it's not overridden by resetCamera
 
-                if (cachedImage && 'windowCenter' in cachedImage && 'windowWidth' in cachedImage) {
-                    // @ts-ignore
-                    const wc = cachedImage.windowCenter;
-                    // @ts-ignore
-                    const ww = cachedImage.windowWidth;
-
-                    if (typeof wc === 'number' && typeof ww === 'number') {
-                        viewport.setProperties({
-                            voiRange: {
-                                lower: wc - ww / 2,
-                                upper: wc + ww / 2,
-                            }
-                        });
-                    }
-                } else if (images[initialIndex]) {
-                    // Fallback to database if image in cache doesn't have WW/WL
-                    const imgDoc = images[initialIndex] as any;
-
-                    const normalizeLutValue = (val: any): number => {
-                        if (Array.isArray(val)) return Number(val[0]);
-                        if (typeof val === 'string' && val.includes('\\')) return Number(val.split('\\')[0]);
-                        return Number(val);
-                    };
-
-                    const wc = normalizeLutValue(imgDoc.windowCenter);
-                    const ww = normalizeLutValue(imgDoc.windowWidth);
-
-                    if (!isNaN(wc) && !isNaN(ww)) {
-                        viewport.setProperties({
-                            voiRange: {
-                                lower: wc - ww / 2,
-                                upper: wc + ww / 2,
-                            }
-                        });
-                    }
-                }
-
+                // Force fit to window
                 viewport.resetCamera();
                 viewport.render();
+                // Double-tap resetCamera after a brief delay to ensure DOM layout is settled
+                setTimeout(() => {
+                    viewport.resetCamera();
+
+                    // Apply VOI: Priority Global Cache > Manual Adjustment (local) > Default
+                    const cachedVoi = seriesUid ? globalVoiCache.get(seriesUid) : null;
+                    if (cachedVoi) {
+                        viewport.setProperties({ voiRange: cachedVoi });
+                        manualVoiRange.current = cachedVoi;
+                    } else if (manualVoiRange.current) {
+                        viewport.setProperties({ voiRange: manualVoiRange.current });
+                    } else {
+                        const currentId = ids[initialIndex];
+                        const cachedImage = cache.getImage(currentId);
+                        if (cachedImage && 'windowCenter' in cachedImage && 'windowWidth' in cachedImage) {
+                            // @ts-ignore
+                            const wc = cachedImage.windowCenter;
+                            // @ts-ignore
+                            const ww = cachedImage.windowWidth;
+                            if (typeof wc === 'number' && typeof ww === 'number') {
+                                viewport.setProperties({ voiRange: { lower: wc - ww / 2, upper: wc + ww / 2 } });
+                            }
+                        } else if (isThumbnail && initialWindowCenter !== undefined && initialWindowWidth !== undefined) {
+                            viewport.setProperties({ voiRange: { lower: initialWindowCenter - initialWindowWidth / 2, upper: initialWindowCenter + initialWindowWidth / 2 } });
+                        } else if (images[initialIndex]) {
+                            const imgDoc = images[initialIndex] as any;
+                            const normalize = (val: any) => {
+                                if (Array.isArray(val)) return Number(val[0]);
+                                if (typeof val === 'string' && val.includes('\\')) return Number(val.split('\\')[0]);
+                                return Number(val);
+                            };
+                            const wc = normalize(imgDoc.windowCenter);
+                            const ww = normalize(imgDoc.windowWidth);
+                            if (!isNaN(wc) && !isNaN(ww)) {
+                                viewport.setProperties({ voiRange: { lower: wc - ww / 2, upper: wc + ww / 2 } });
+                            }
+                        }
+                    }
+
+                    viewport.render();
+                }, 50);
+
                 setStatus('');
 
                 const firstImage = cache.getImage(ids[0]);
-                if (firstImage) {
+                if (firstImage && !isThumbnail) {
                     const subseries = await db.T_Subseries.findOne(seriesUid).exec();
                     const study = subseries ? await db.T_Study.findOne({ selector: { studyInstanceUID: subseries.studyInstanceUID } }).exec() : null;
                     const patient = study ? await db.T_Patient.findOne({ selector: { id: study.patientId } }).exec() : null;
 
-                    // Update metadata using database records (pre-decoded) to avoid mojibake
+                    // Helper to get robust VOI from current viewport state or defaults
+                    const getDisplayVoi = () => {
+                        const vp = viewport as Types.IStackViewport | Types.IVolumeViewport;
+                        const props = vp.getProperties();
+                        if (props.voiRange) {
+                            return {
+                                windowWidth: props.voiRange.upper - props.voiRange.lower,
+                                windowCenter: (props.voiRange.upper + props.voiRange.lower) / 2
+                            };
+                        }
+                        // Fallback: Try to get from image metadata
+                        const currentId = (vp as Types.IStackViewport).getCurrentImageId ? (vp as Types.IStackViewport).getCurrentImageId() : ids[0];
+                        const voi = currentId ? metaData.get('voiLutModule', currentId) : null;
+                        if (voi && voi.windowCenter != null) {
+                            return {
+                                windowWidth: Number(Array.isArray(voi.windowWidth) ? voi.windowWidth[0] : voi.windowWidth),
+                                windowCenter: Number(Array.isArray(voi.windowCenter) ? voi.windowCenter[0] : voi.windowCenter)
+                            };
+                        }
+                        return { windowWidth: 1, windowCenter: 0.5 }; // Ultra-fallback
+                    };
+
+                    const displayVoi = getDisplayVoi();
+
                     setMetadata({
                         patientName: patient ? patient.patientName : 'Anonymous',
                         patientID: patient ? patient.patientID : 'Unknown',
@@ -355,9 +487,16 @@ export const Viewport = ({
                         modality: subseries ? subseries.modality : '',
                         instanceNumber: viewport.getCurrentImageIdIndex() + 1,
                         totalInstances: ids.length,
-                        windowWidth: viewport.getProperties().voiRange ? (viewport.getProperties().voiRange!.upper - viewport.getProperties().voiRange!.lower) : 400,
-                        windowCenter: viewport.getProperties().voiRange ? (viewport.getProperties().voiRange!.upper + viewport.getProperties().voiRange!.lower) / 2 : 40,
+                        windowWidth: displayVoi.windowWidth,
+                        windowCenter: displayVoi.windowCenter,
                     });
+                } else if (isThumbnail) {
+                    // For thumbnails, just update instance number and basic VOI info if possible
+                    setMetadata((prev: any) => ({
+                        ...prev,
+                        instanceNumber: viewport.getCurrentImageIdIndex() + 1,
+                        totalInstances: ids.length,
+                    }));
                 }
 
                 resizeObserver = new ResizeObserver(() => {
@@ -365,7 +504,7 @@ export const Viewport = ({
                     if (engine) {
                         engine.resize();
                         if (autoFit) {
-                            const vp = engine.getViewport(viewportId) as Types.IStackViewport;
+                            const vp = engine.getViewport(viewportId) as Types.IStackViewport | Types.IVolumeViewport;
                             if (vp) {
                                 vp.resetCamera();
                                 vp.render();
@@ -398,39 +537,109 @@ export const Viewport = ({
     useEffect(() => {
         if (!isReady || isThumbnail) return;
 
+        const enforceStickyVoi = () => {
+            if (!seriesUid) return;
+            const engine = getRenderingEngine(renderingEngineId);
+            const viewport = engine?.getViewport(viewportId) as Types.IStackViewport;
+            if (!viewport) return;
+
+            const targetVoi = manualVoiRange.current || globalVoiCache.get(seriesUid);
+            if (!targetVoi) return;
+
+            const currentVoi = viewport.getProperties().voiRange;
+            if (!currentVoi) return;
+
+            // Use a small epsilon to prevent jitter/infinite loops
+            const diff = Math.abs(currentVoi.lower - targetVoi.lower) + Math.abs(currentVoi.upper - targetVoi.upper);
+            if (diff > 0.5) {
+                console.log(`Viewport ${viewportId}: Enforcing Sticky VOI on series ${seriesUid}`);
+                viewport.setProperties({ voiRange: targetVoi });
+                viewport.render();
+            }
+        };
+
         const handleImageChange = (evt: any) => {
+            if (evt.detail.viewportId !== viewportId) return;
+            enforceStickyVoi();
+
+            const engine = getRenderingEngine(renderingEngineId);
+            const viewport = engine?.getViewport(viewportId) as Types.IStackViewport | Types.IVolumeViewport;
+            if (!viewport) return;
+
+            const getDisplayVoi = () => {
+                const props = viewport.getProperties();
+                if (props.voiRange) {
+                    return {
+                        windowWidth: props.voiRange.upper - props.voiRange.lower,
+                        windowCenter: (props.voiRange.upper + props.voiRange.lower) / 2
+                    };
+                }
+                const currentId = (viewport as Types.IStackViewport).getCurrentImageId ? (viewport as Types.IStackViewport).getCurrentImageId() : null;
+                const voi = currentId ? metaData.get('voiLutModule', currentId) : null;
+                if (voi && voi.windowCenter != null) {
+                    return {
+                        windowWidth: Number(Array.isArray(voi.windowWidth) ? voi.windowWidth[0] : voi.windowWidth),
+                        windowCenter: Number(Array.isArray(voi.windowCenter) ? voi.windowCenter[0] : voi.windowCenter)
+                    };
+                }
+                return { windowWidth: 1, windowCenter: 0.5 };
+            };
+
+            const displayVoi = getDisplayVoi();
+
+            setMetadata((prev: any) => ({
+                ...prev,
+                instanceNumber: viewport.getCurrentImageIdIndex() + 1,
+                windowWidth: displayVoi.windowWidth,
+                windowCenter: displayVoi.windowCenter,
+            }));
+        };
+
+        const handleVoiModified = (evt: any) => {
             if (evt.detail.viewportId !== viewportId) return;
             const engine = getRenderingEngine(renderingEngineId);
             const viewport = engine?.getViewport(viewportId) as Types.IStackViewport;
             if (!viewport) return;
 
-            setMetadata((prev: any) => ({
-                ...prev,
-                instanceNumber: viewport.getCurrentImageIdIndex() + 1,
-                windowWidth: viewport.getProperties().voiRange ? viewport.getProperties().voiRange!.upper - viewport.getProperties().voiRange!.lower : 400,
-                windowCenter: viewport.getProperties().voiRange ? (viewport.getProperties().voiRange!.upper + viewport.getProperties().voiRange!.lower) / 2 : 40,
-            }));
+            const props = viewport.getProperties();
+            if (props.voiRange && seriesUid) {
+                const newVoi = { ...props.voiRange };
+                manualVoiRange.current = newVoi;
+                globalVoiCache.set(seriesUid, newVoi);
+            }
+
+            handleImageChange(evt);
+        };
+
+        const handleCameraModified = (evt: any) => {
+            if (evt.detail.viewportId !== viewportId) return;
+            // CAMERA_MODIFIED is often triggered by resetCamera which can reset VOI on some versions of CS
+            enforceStickyVoi();
         };
 
         const element = elementRef.current;
         element?.addEventListener(Enums.Events.STACK_NEW_IMAGE, handleImageChange);
-        element?.addEventListener(Enums.Events.VOI_MODIFIED, handleImageChange);
+        element?.addEventListener(Enums.Events.VOI_MODIFIED, handleVoiModified);
+        element?.addEventListener(Enums.Events.CAMERA_MODIFIED, handleCameraModified);
 
         return () => {
             element?.removeEventListener(Enums.Events.STACK_NEW_IMAGE, handleImageChange);
-            element?.removeEventListener(Enums.Events.VOI_MODIFIED, handleImageChange);
+            element?.removeEventListener(Enums.Events.VOI_MODIFIED, handleVoiModified);
+            element?.removeEventListener(Enums.Events.CAMERA_MODIFIED, handleCameraModified);
         };
-    }, [viewportId, renderingEngineId, isThumbnail, isReady]);
+    }, [viewportId, renderingEngineId, isThumbnail, isReady, seriesUid]);
 
     const handleSliceChange = (sliceIndex: number) => {
         const engine = getRenderingEngine(renderingEngineId);
         const viewport = engine?.getViewport(viewportId) as Types.IStackViewport;
-        if (viewport) {
+        if (viewport && viewport.setImageIdIndex) {
             // Convert 1-based UI slice to 0-based Cornerstone index
             viewport.setImageIdIndex(sliceIndex - 1);
             viewport.render();
         }
     };
+
+    // Orientation changes now trigger loadSeries which handles the viewport type switch and orientation automatically.
 
     return (
         <div className="w-full h-full relative bg-black group overflow-hidden">

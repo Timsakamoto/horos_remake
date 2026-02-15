@@ -30,9 +30,11 @@ export const OverlayManager: React.FC<OverlayProps> = ({ metadata }) => {
             {/* Top Left: Patient / Study Info */}
             <div className="absolute top-4 left-4 flex flex-col gap-0.5">
                 <div className="text-peregrine-accent font-black tracking-wider uppercase text-[12px]">{metadata.patientName || 'Anonymous'}</div>
-                <div>{metadata.patientID || 'Unknown ID'}</div>
+                {metadata.patientID && metadata.patientID !== '0000000' && metadata.patientID !== 'Unknown' && (
+                    <div>{metadata.patientID}</div>
+                )}
                 <div>{metadata.patientBirthDate || ''} {metadata.patientSex || ''}</div>
-                <div className="mt-1 opacity-70">{metadata.institutionName || ''}</div>
+                {/* <div className="mt-1 opacity-70">{metadata.institutionName || ''}</div> */}
             </div>
 
             {/* Top Right: Study / Series Info */}

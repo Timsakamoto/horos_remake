@@ -358,7 +358,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                 )}
             </div>
             {/* Table Header - Peregrine Slate Style */}
-            <div className="grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1fr_1.2fr_32px] bg-gradient-to-b from-[#e8e8e8] to-[#d0d0d0] border-b border-[#a0a0a0] px-4 py-1.5 text-[9px] font-black uppercase tracking-tight text-gray-700 shadow-sm z-20">
+            <div className="grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] bg-gradient-to-b from-[#e8e8e8] to-[#d0d0d0] border-b border-[#a0a0a0] px-4 py-1.5 text-[9px] font-black uppercase tracking-tight text-gray-700 shadow-sm z-20">
                 <div className="border-r border-gray-300 pr-2 last:border-none flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('patientName')}>Patient Name{getSortIcon('patientName')}</div>
                 <div className="border-r border-gray-300 px-2 last:border-none flex items-center">Patient ID</div>
                 <div className="border-r border-gray-300 px-2 last:border-none flex items-center">Birth Date</div>
@@ -367,7 +367,6 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                 <div className="border-r border-gray-300 px-2 last:border-none flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('studyDescription')}>Description{getSortIcon('studyDescription')}</div>
                 <div className="border-r border-gray-300 px-2 last:border-none flex items-center">Modality</div>
                 <div className="border-r border-gray-300 px-2 last:border-none flex items-center text-right"># im</div>
-                <div className="border-r border-gray-300 px-2 last:border-none flex items-center">Institution</div>
                 <div className="border-r border-gray-300 px-2 last:border-none flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('userComments')}>Comments{getSortIcon('userComments')}</div>
                 <div className="text-center text-red-500/50 flex justify-center items-center"><Trash2 size={10} /></div>
             </div>
@@ -385,7 +384,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                             {/* Patient Row (or Study Row in Study Mode) */}
                             <div
                                 onClick={() => togglePatient(patient.id)}
-                                className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1fr_1.2fr_32px] px-4 py-1.5 cursor-default transition-all items-center text-[11px] group border-b border-[#f0f0f0] ${(patient._isStudy ? (selectedStudyUid === patient.id) : (selectedPatientId === patient.id)) ? 'bg-[#387aff] text-white' : 'hover:bg-blue-50/50'}`}
+                                className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-1.5 cursor-default transition-all items-center text-[11px] group border-b border-[#f0f0f0] ${(patient._isStudy ? (selectedStudyUid === patient.id) : (selectedPatientId === patient.id)) ? 'bg-[#387aff] text-white' : 'hover:bg-blue-50/50'}`}
                             >
                                 <div
                                     className="flex items-center gap-1.5 font-bold truncate cursor-text"
@@ -427,9 +426,6 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                 </div>
                                 <div className={`text-right font-mono text-[10px] px-2 ${selectedPatientId === patient.id ? 'text-white/90' : 'text-gray-400'}`}>
                                     {patient.totalImageCount || 0}
-                                </div>
-                                <div className={`px-2 truncate ${selectedPatientId === patient.id ? 'text-white/80' : 'text-gray-400'}`}>
-                                    {patient.institutionName || '-'}
                                 </div>
                                 <div className="px-2 flex items-center">
                                     <input
@@ -498,7 +494,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                         (window as any).electron.openViewer(series.seriesInstanceUID);
                                                     }
                                                 }}
-                                                className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1fr_1.2fr_32px] px-4 py-0.5 cursor-default text-[10px] items-center border-l-[3px] group/series transition-all ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-peregrine-accent text-white border-blue-600' : 'hover:bg-gray-100 text-gray-600 border-transparent'}`}
+                                                className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-0.5 cursor-default text-[10px] items-center border-l-[3px] group/series transition-all ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-peregrine-accent text-white border-blue-600' : 'hover:bg-gray-100 text-gray-600 border-transparent'}`}
                                             >
                                                 <div
                                                     className="flex items-center gap-1.5 pl-8 truncate cursor-text"
@@ -528,7 +524,6 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                     {series.imageCount || 0}
                                                 </div>
                                                 <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
-                                                <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
                                                 <div className="flex justify-end opacity-40 group-hover/series:opacity-100 transition-opacity">
                                                     <button
                                                         onClick={(e) => handleDeleteSeries(e, series.seriesInstanceUID, series.seriesDescription || 'Untitled Series')}
@@ -545,7 +540,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                             <React.Fragment key={study.studyInstanceUID}>
                                                 <div
                                                     onClick={(e) => { e.stopPropagation(); toggleStudy(study.studyInstanceUID); }}
-                                                    className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1fr_1.2fr_32px] px-4 py-1 cursor-default text-[10.5px] items-center border-l-[3px] group/study ${selectedStudyUid === study.studyInstanceUID ? 'bg-[#d0e0ff] border-peregrine-accent' : 'hover:bg-gray-100/50 border-transparent'}`}
+                                                    className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-1 cursor-default text-[10.5px] items-center border-l-[3px] group/study ${selectedStudyUid === study.studyInstanceUID ? 'bg-[#d0e0ff] border-peregrine-accent' : 'hover:bg-gray-100/50 border-transparent'}`}
                                                 >
                                                     <div className="flex items-center gap-1.5 pl-4 text-gray-800 font-semibold truncate">
                                                         <div className="w-4 flex items-center justify-center text-gray-400">
@@ -565,7 +560,6 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                         ))}
                                                     </div>
                                                     <div className="text-right text-gray-600 font-mono text-[9px] font-bold px-2">{study.numberOfStudyRelatedInstances || '-'}</div>
-                                                    <div className="text-gray-500 truncate text-[10px] px-2">{study.institutionName || '-'}</div>
                                                     <div className="px-2 flex items-center">
                                                         <input
                                                             type="text"
@@ -612,7 +606,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                                 (window as any).electron.openViewer(series.seriesInstanceUID);
                                                             }
                                                         }}
-                                                        className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1fr_1.2fr_32px] px-4 py-0.5 cursor-default text-[10px] items-center border-l-[3px] group/series transition-all ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-peregrine-accent text-white border-blue-600' : 'hover:bg-gray-100 text-gray-600 border-transparent'}`}
+                                                        className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-0.5 cursor-default text-[10px] items-center border-l-[3px] group/series transition-all ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-peregrine-accent text-white border-blue-600' : 'hover:bg-gray-100 text-gray-600 border-transparent'}`}
                                                     >
                                                         <div className="flex items-center gap-1.5 pl-12 truncate">
                                                             <Activity size={10} className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'} />
@@ -629,7 +623,6 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                         <div className={`text-right font-mono font-bold px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white' : 'text-[#ff3b30]'}`}>
                                                             {series.imageCount || 0}
                                                         </div>
-                                                        <div className={`px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}`}>-</div>
                                                         <div className={`px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}`}>-</div>
                                                         <div className="flex justify-end opacity-40 group-hover/series:opacity-100 transition-opacity">
                                                             <button
