@@ -37,7 +37,26 @@ export interface DicomMetadata {
     imagePositionPatient: string;
     imageOrientationPatient: string;
     pixelSpacing: string;
+
     sliceThickness: number;
+    acquisitionNumber: number;
+    echoNumber?: number;
+    temporalPositionIdentifier?: number;
+    imageType?: string[];
+    sequenceName?: string;
+    diffusionBValue?: number;
+
+    // Cine / Temporal Tags
+    frameTime?: number;
+    recommendedDisplayFrameRate?: number;
+    cineRate?: number;
+    cardiacNumberOfImages?: number;
+    triggerTime?: number;
+
+    // Splitting / Indexing Tags
+    temporalPositionIndex?: number;
+    stackID?: string;
+    acquisitionTime?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -240,7 +259,48 @@ export const parseDicombuffer = (buffer: ArrayBuffer | Uint8Array): DicomMetadat
                 imageOrientationPatient: safeString(get('ImageOrientationPatient')),
                 pixelSpacing: safeString(get('PixelSpacing')),
                 sliceThickness: safeNumber(get('SliceThickness')),
+                acquisitionNumber: safeNumber(get('AcquisitionNumber')),
+                echoNumber: safeNumber(get('EchoNumber')),
+                temporalPositionIdentifier: safeNumber(get('TemporalPositionIdentifier')),
+                imageType: safeString(get('ImageType')).split('\\'),
+                sequenceName: safeString(get('SequenceName')),
+                // Diffusion B-Value Strategy:
+                // 1. Standard (0018,9087)
+                // 2. GE Private (0043,1039)
+                // 3. Siemens Private (0019,100c)
+                // 4. Philips Private (2001,1003)
+                diffusionBValue: (() => {
+                    const std = get('DiffusionBValue');
+                    const ge = get('00431039');
+                    const sie = get('0019100c');
+                    const phi = get('20011003');
+                    const seq = get('MRDiffusionSequence')?.[0]?.DiffusionBValue;
+
+                    if (std !== undefined) return safeNumber(std);
+                    if (ge !== undefined) return safeNumber(ge);
+                    if (sie !== undefined) return safeNumber(sie);
+                    if (phi !== undefined) return safeNumber(phi);
+                    if (seq !== undefined) return safeNumber(seq);
+                    return undefined;
+                })(),
+
+                // Cine / Temporal
+                frameTime: safeNumber(get('FrameTime')),
+                recommendedDisplayFrameRate: safeNumber(get('RecommendedDisplayFrameRate')),
+                cineRate: safeNumber(get('CineRate')),
+                cardiacNumberOfImages: safeNumber(get('CardiacNumberOfImages')),
+                triggerTime: safeNumber(get('TriggerTime')),
+
+                // Splitting / Indexing
+                temporalPositionIndex: safeNumber(get('TemporalPositionIndex')),
+                stackID: safeString(get('StackID')),
+                acquisitionTime: safeNumber(get('AcquisitionTime')),
             };
+
+            // Debug Log for B-Value Search (Temporary)
+            if (result.modality === 'MR') {
+                console.log(`DICOM Parser [${result.sopInstanceUID}]: B-Value Search -> Standard: ${get('DiffusionBValue')}, GE: ${get('00431039')}, Philips: ${get('20011003')}, Seq: ${get('MRDiffusionSequence')?.[0]?.DiffusionBValue}, Final: ${result.diffusionBValue}`);
+            }
 
             // Validation
             if (!result.imagePositionPatient || result.imagePositionPatient === '') {
@@ -376,6 +436,35 @@ const parseWithDicomParser = (buffer: ArrayBuffer | Uint8Array): DicomMetadata |
             imageOrientationPatient: getString('x00200037') || '',
             pixelSpacing: getString('x00280030') || '',
             sliceThickness: getNumber('x00180050') || 0,
+            acquisitionNumber: getNumber('x00200012') || 0,
+            echoNumber: getNumber('x00180086'),
+            temporalPositionIdentifier: getNumber('x00200100'),
+            imageType: (getString('x00080008') || '').split('\\'),
+            sequenceName: getString('x00180024'),
+            // Standard B-Value (0018,9087) or GE (0043,1039) or Siemens (0019,100c) or Philips (2001,1003)
+            diffusionBValue: (() => {
+                const std = getNumber('x00189087');
+                const ge = getNumber('x00431039');
+                const sie = getNumber('x0019100c');
+                const phi = getNumber('x20011003');
+                if (std !== undefined) return std;
+                if (ge !== undefined) return ge;
+                if (sie !== undefined) return sie;
+                if (phi !== undefined) return phi;
+                return undefined;
+            })(),
+
+            // Cine / Temporal
+            frameTime: getNumber('x00181063'),
+            recommendedDisplayFrameRate: getNumber('x00082144'),
+            cineRate: getNumber('x00180040'),
+            cardiacNumberOfImages: getNumber('x00181090'),
+            triggerTime: getNumber('x00181060'),
+
+            // Splitting / Indexing
+            temporalPositionIndex: getNumber('x00209128'),
+            stackID: getString('x00209056'),
+            acquisitionTime: getNumber('x00080032'),
         };
     } catch (e) {
         console.error('DICOM Parser Fallback failed:', e);

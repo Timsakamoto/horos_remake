@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useDatabase } from '../Database/DatabaseProvider';
 import { usePACS } from '../PACS/PACSProvider';
+import { useSettings } from '../Settings/SettingsContext';
 import { Viewport } from './Viewport';
 
 interface SeriesSummary {
@@ -18,12 +19,30 @@ interface Props {
     selectedSeriesUid?: string | null;
     onSelect: (seriesUid: string | null) => void;
     defaultCols?: number;
+    fixedCols?: number;
 }
 
-export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUid, defaultCols = 2 }: Props) => {
-    const { db, lastDeletionTime } = useDatabase();
+export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUid, defaultCols = 6, fixedCols }: Props) => {
+    const { db } = useDatabase();
+    const { thumbnailCols: savedCols, setThumbnailCols: setSavedCols, databasePath } = useSettings();
+    const [cols, setCols] = useState(fixedCols || savedCols || defaultCols);
     const [seriesList, setSeriesList] = useState<SeriesSummary[]>([]);
-    const [cols, setCols] = useState(defaultCols);
+
+    // Sync instance cols with saved settings (only if NOT fixed)
+    useEffect(() => {
+        if (fixedCols !== undefined) {
+            setCols(fixedCols);
+        } else if (savedCols) {
+            setCols(savedCols);
+        }
+    }, [savedCols, fixedCols]);
+
+    const handleSetCols = (newCols: number) => {
+        if (fixedCols !== undefined) return; // Cannot change fixed cols
+        setCols(newCols);
+        setSavedCols(newCols);
+    };
+
     const { servers, sendToPacs } = usePACS();
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, seriesUid: string } | null>(null);
     const [showSendModal, setShowSendModal] = useState(false);
@@ -42,17 +61,28 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
             let targetStudyUids: string[] = [];
             let studies: any[] = [];
 
+            console.log(`ThumbnailStrip: Starting fetchSeries. patientId="${patientId}", studyUid="${studyUid}"`);
+
             if (studyUid) {
-                // If studyUid is provided, only show series for THIS study
                 targetStudyUids = [studyUid];
                 const s = await db.T_Study.findOne({ selector: { studyInstanceUID: studyUid } }).exec();
-                if (s) studies = [s];
+                if (s) {
+                    studies = [s];
+                    console.log(`ThumbnailStrip: Found specific study ${studyUid}`);
+                } else {
+                    console.warn(`ThumbnailStrip: Specific study ${studyUid} NOT found. Falling back to all studies for patient.`);
+                    studies = await db.T_Study.find({
+                        selector: { patientId },
+                        sort: [{ studyDate: 'desc' }]
+                    }).exec();
+                    targetStudyUids = studies.map(st => st.studyInstanceUID);
+                }
             } else {
-                // Fallback: Fetch ALL studies for this patient
                 studies = await db.T_Study.find({
                     selector: { patientId },
                     sort: [{ studyDate: 'desc' }]
                 }).exec();
+                console.log(`ThumbnailStrip: Found ${studies.length} studies for patient ${patientId}`);
                 targetStudyUids = studies.map(s => s.studyInstanceUID);
             }
 
@@ -70,6 +100,8 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                     sort: [{ seriesNumber: 'asc' }]
                 }).exec();
 
+                console.log(`ThumbnailStrip: Found ${seriesDocs.length} series for study ${sUid}`);
+
                 for (const s of seriesDocs) {
                     const count = await db.T_FilePath.count({
                         selector: { seriesInstanceUID: s.seriesInstanceUID }
@@ -86,13 +118,19 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
 
                     const parentStudy = studies.find(sd => sd.studyInstanceUID === s.studyInstanceUID);
 
+                    let thumbPath = middleImage ? middleImage.filePath : null;
+                    if (thumbPath && !(thumbPath.startsWith('/') || /^[a-zA-Z]:/.test(thumbPath)) && databasePath) {
+                        const sep = databasePath.includes('\\') ? '\\' : '/';
+                        thumbPath = `${databasePath.replace(/[\\/]$/, '')}${sep}${thumbPath.replace(/^[\\/]/, '')}`;
+                    }
+
                     allSeries.push({
                         seriesInstanceUID: s.seriesInstanceUID,
                         seriesDescription: `${parentStudy?.studyDate || ''} - ${s.seriesDescription}`,
                         modality: s.modality,
                         seriesNumber: String(s.seriesNumber),
                         numImages: count,
-                        thumbnailImageId: middleImage ? middleImage.filePath : null
+                        thumbnailImageId: thumbPath
                     });
                 }
             }
@@ -113,7 +151,7 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
 
         fetchSeries();
 
-    }, [db, patientId, studyUid, lastDeletionTime]);
+    }, [db, patientId, studyUid, databasePath]);
 
     return (
         <div className="w-full h-full bg-[#0a0a0b] flex flex-col select-none border-r border-white/5">
@@ -124,19 +162,21 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                     <span className="text-[9px] font-bold text-gray-600 tabular-nums uppercase tracking-tighter">{seriesList.length} Items Available</span>
                 </div>
 
-                {/* Size Controls - Integrated Glassmorphism */}
-                <div className="flex items-center gap-2.5 bg-black/40 px-3 py-1.5 rounded-full border border-white/10">
-                    <span className="text-[8px] font-black text-gray-500 uppercase tracking-tighter">Cols</span>
-                    <input
-                        type="range"
-                        min="2"
-                        max="7"
-                        value={8 - cols}
-                        onChange={(e) => setCols(8 - parseInt(e.target.value))}
-                        className="w-12 h-0.5 bg-white/10 rounded-full appearance-none cursor-pointer accent-peregrine-accent"
-                    />
-                    <span className="text-[9px] font-black text-peregrine-accent w-2 text-center">{cols}</span>
-                </div>
+                {/* Column Adjuster - Hidden if fixedCols is active */}
+                {fixedCols === undefined && (
+                    <div className="flex items-center gap-2.5 bg-black/40 px-3 py-1.5 rounded-full border border-white/10">
+                        <span className="text-[8px] font-black text-gray-500 uppercase tracking-tighter">Cols</span>
+                        <input
+                            type="range"
+                            min="1"
+                            max="12"
+                            value={cols}
+                            onChange={(e) => handleSetCols(parseInt(e.target.value))}
+                            className="w-16 h-0.5 bg-white/10 rounded-full appearance-none cursor-pointer accent-peregrine-accent"
+                        />
+                        <span className="text-[9px] font-black text-peregrine-accent w-3 text-center">{cols}</span>
+                    </div>
+                )}
             </div>
 
             <div

@@ -20,6 +20,13 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
     selectedStudyUid,
     selectedSeriesUid
 }) => {
+    const formatDICOMDate = (da: string | undefined): string => {
+        if (!da || da === '-') return '-';
+        const clean = da.replace(/[^0-9]/g, '');
+        if (clean.length !== 8) return da;
+        return `${clean.substring(0, 4)}/${clean.substring(4, 6)}/${clean.substring(6, 8)}`;
+    };
+
     const { patients, db, requestDelete, lastDeletionTime, searchFilters, setSearchFilters, availableModalities, sortConfig, setSortConfig } = useDatabase();
     const [expandedPatients, setExpandedPatients] = useState<Set<string>>(new Set());
     const [expandedStudies, setExpandedStudies] = useState<Set<string>>(new Set());
@@ -67,7 +74,16 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                 selector: { patientId },
                 sort: [{ ImportDateTime: 'desc' }]
             }).exec();
-            setStudiesMap(prev => ({ ...prev, [patientId]: studies }));
+            // Fallback institutionName from patient if missing in study
+            const patientDoc = await db.T_Patient.findOne(patientId).exec();
+            const mappedStudies = studies.map(s => {
+                const data = s.toJSON();
+                return {
+                    ...data,
+                    institutionName: data.institutionName || patientDoc?.institutionName || ''
+                };
+            });
+            setStudiesMap(prev => ({ ...prev, [patientId]: mappedStudies }));
         }
     };
 
@@ -141,6 +157,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
         searchFilters.userComments !== '';
 
     const togglePatient = async (patientId: string) => {
+        const patient = patients.find(p => p.id === patientId);
         const newExpanded = new Set(expandedPatients);
         if (newExpanded.has(patientId)) {
             newExpanded.delete(patientId);
@@ -151,7 +168,14 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
             }
         }
         setExpandedPatients(newExpanded);
-        onPatientSelect(patientId);
+
+        if (patient?._isStudy) {
+            onPatientSelect(patient.patientID); // Real Patient ID for context
+            onStudySelect(patient.id); // Study UID for series browser
+        } else {
+            onPatientSelect(patientId);
+            onStudySelect(null);
+        }
     };
 
     const toggleStudy = async (studyUid: string) => {
@@ -361,7 +385,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                             {/* Patient Row (or Study Row in Study Mode) */}
                             <div
                                 onClick={() => togglePatient(patient.id)}
-                                className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1fr_1.2fr_32px] px-4 py-1.5 cursor-default transition-all items-center text-[11px] group border-b border-[#f0f0f0] ${selectedPatientId === patient.id ? 'bg-[#387aff] text-white' : 'hover:bg-blue-50/50'}`}
+                                className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1fr_1.2fr_32px] px-4 py-1.5 cursor-default transition-all items-center text-[11px] group border-b border-[#f0f0f0] ${(patient._isStudy ? (selectedStudyUid === patient.id) : (selectedPatientId === patient.id)) ? 'bg-[#387aff] text-white' : 'hover:bg-blue-50/50'}`}
                             >
                                 <div
                                     className="flex items-center gap-1.5 font-bold truncate cursor-text"
@@ -381,7 +405,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                 <div className={`px-2 ${selectedPatientId === patient.id ? 'text-white/80' : 'text-gray-400'}`}>{patient.patientSex || '-'}</div>
 
                                 <div className={`px-2 truncate ${selectedPatientId === patient.id ? 'text-white/80' : 'text-gray-500'}`}>
-                                    {patient._isStudy ? patient.studyDate : '-'}
+                                    {patient._isStudy ? formatDICOMDate(patient.studyDate) : '-'}
                                 </div>
                                 <div
                                     className={`truncate px-2 ${selectedPatientId === patient.id ? 'text-white/80' : 'italic text-gray-400'} cursor-text`}
@@ -404,7 +428,9 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                 <div className={`text-right font-mono text-[10px] px-2 ${selectedPatientId === patient.id ? 'text-white/90' : 'text-gray-400'}`}>
                                     {patient.totalImageCount || 0}
                                 </div>
-                                <div className={`px-2 ${selectedPatientId === patient.id ? 'text-white/80' : 'text-gray-400'}`}>-</div>
+                                <div className={`px-2 truncate ${selectedPatientId === patient.id ? 'text-white/80' : 'text-gray-400'}`}>
+                                    {patient.institutionName || '-'}
+                                </div>
                                 <div className="px-2 flex items-center">
                                     <input
                                         type="text"
@@ -422,7 +448,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                             }
                                         }}
                                         onClick={(e) => e.stopPropagation()}
-                                        className={`bg-transparent border-none text-[10px] w-full focus:outline-none focus:ring-1 focus:ring-peregrine-accent/30 rounded px-1 ${selectedPatientId === patient.id ? 'text-white placeholder:text-white/40' : 'text-gray-500'}`}
+                                        className={`bg-transparent border-none text-[10px] w-full focus:outline-none focus:ring-1 focus:ring-peregrine-accent/30 rounded px-1 ${(patient._isStudy ? (selectedStudyUid === patient.id) : (selectedPatientId === patient.id)) ? 'text-white placeholder:text-white/40' : 'text-gray-500'}`}
                                         placeholder="Add comment..."
                                     />
                                 </div>
@@ -436,7 +462,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                 handleDeletePatient(e, patient.id, patient.patientName);
                                             }
                                         }}
-                                        className={`p-1 rounded-md transition-colors ${selectedPatientId === patient.id ? 'hover:bg-white/20 text-white' : 'hover:bg-red-50 text-red-500'}`}
+                                        className={`p-1 rounded-md transition-colors ${(patient._isStudy ? (selectedStudyUid === patient.id) : (selectedPatientId === patient.id)) ? 'hover:bg-white/20 text-white' : 'hover:bg-red-50 text-red-500'}`}
                                     >
                                         <Trash2 size={14} />
                                     </button>
@@ -448,7 +474,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                 setSendMenu({ x: e.clientX, y: e.clientY, type: 'study', uid: patient.id });
                                                 setShowSendModal(true);
                                             }}
-                                            className={`p-1 rounded-md transition-colors ml-1 ${selectedPatientId === patient.id ? 'hover:bg-white/20 text-white' : 'hover:bg-blue-50 text-blue-500'}`}
+                                            className={`p-1 rounded-md transition-colors ml-1 ${(patient._isStudy ? (selectedStudyUid === patient.id) : (selectedPatientId === patient.id)) ? 'hover:bg-white/20 text-white' : 'hover:bg-blue-50 text-blue-500'}`}
                                             title="Send to PACS"
                                         >
                                             <div className="rotate-[-45deg]"><Activity size={14} /></div>
@@ -526,13 +552,13 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                             {expandedStudies.has(study.studyInstanceUID) ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
                                                         </div>
                                                         <Calendar size={12} className="text-[#ff9500]/80" />
-                                                        {study.studyDescription || 'Untitled Study'}
+                                                        <span className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Study</span>
                                                     </div>
                                                     <div className="text-gray-500 font-mono text-[9px] truncate px-2">-</div>
                                                     <div className="text-gray-500 text-[9px] tabular-nums px-2">-</div>
                                                     <div className="text-gray-400 px-2">-</div>
-                                                    <div className="text-gray-600 font-medium tabular-nums px-2">{study.studyDate}</div>
-                                                    <div className="text-gray-700 truncate font-bold px-2">{study.studyDescription}</div>
+                                                    <div className="text-gray-600 font-medium tabular-nums px-2">{formatDICOMDate(study.studyDate)}</div>
+                                                    <div className="text-gray-700 truncate font-bold px-2">{study.studyDescription || 'Untitled Study'}</div>
                                                     <div className="flex gap-1 px-2">
                                                         {study.modalitiesInStudy?.map((m: string) => (
                                                             <span key={m} className="px-1 py-0.5 rounded bg-blue-50 text-peregrine-accent text-[8px] font-black border border-peregrine-accent/10">{m}</span>

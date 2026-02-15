@@ -1,7 +1,79 @@
-import { app, BrowserWindow, ipcMain, dialog, session } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron'
 import { join, basename, dirname } from 'node:path'
 import { readFile, writeFile, readdir, stat, mkdir, copyFile, unlink } from 'node:fs/promises'
 import { DICOMService } from './dicom/DICOMService'
+
+// Set app name explicitly for rebranding
+app.name = 'Peregrine'
+if (process.platform === 'darwin') {
+    app.setName('Peregrine')
+}
+
+function createDefaultMenu() {
+    const template: any[] = [
+        {
+            label: app.name,
+            submenu: [
+                { role: 'about' },
+                { type: 'separator' },
+                { role: 'services' },
+                { type: 'separator' },
+                { role: 'hide' },
+                { role: 'hideOthers' },
+                { role: 'unhide' },
+                { type: 'separator' },
+                { role: 'quit' }
+            ]
+        },
+        {
+            label: 'File',
+            submenu: [
+                { role: 'close' }
+            ]
+        },
+        {
+            label: 'Edit',
+            submenu: [
+                { role: 'undo' },
+                { role: 'redo' },
+                { type: 'separator' },
+                { role: 'cut' },
+                { role: 'copy' },
+                { role: 'paste' },
+                { role: 'delete' },
+                { type: 'separator' },
+                { role: 'selectAll' }
+            ]
+        },
+        {
+            label: 'View',
+            submenu: [
+                { role: 'reload' },
+                { role: 'forceReload' },
+                { role: 'toggleDevTools' },
+                { type: 'separator' },
+                { role: 'resetZoom' },
+                { role: 'zoomIn' },
+                { role: 'zoomOut' },
+                { type: 'separator' },
+                { role: 'togglefullscreen' }
+            ]
+        },
+        {
+            label: 'Window',
+            submenu: [
+                { role: 'minimize' },
+                { role: 'zoom' },
+                { type: 'separator' },
+                { role: 'front' },
+                { type: 'separator' },
+                { role: 'window' }
+            ]
+        }
+    ]
+    const menu = Menu.buildFromTemplate(template)
+    Menu.setApplicationMenu(menu)
+}
 
 // The built directory structure
 //
@@ -18,7 +90,7 @@ let win: BrowserWindow | null
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
-let dicomService: DICOMService;
+
 
 function createWindow() {
     win = new BrowserWindow({
@@ -90,8 +162,10 @@ ipcMain.handle('fs:readdirRecursive', async (_, dirPath: string) => {
         };
         await walk(dirPath);
         return results;
-    } catch (err) {
-        console.error('fs:readdirRecursive error:', err);
+    } catch (err: any) {
+        if (err.code !== 'ENOENT') {
+            console.error('fs:readdirRecursive error:', err);
+        }
         return [];
     }
 });
@@ -172,11 +246,26 @@ ipcMain.handle('fs:unlink', async (_, filePath: string) => {
     }
 });
 
+ipcMain.handle('fs:stat', async (_, filePath: string) => {
+    try {
+        const s = await stat(filePath);
+        return {
+            size: s.size,
+            isDirectory: s.isDirectory(),
+            mtime: s.mtime.getTime()
+        };
+    } catch (e) {
+        console.error('fs:stat error:', e);
+        return null;
+    }
+});
+
 ipcMain.handle('path:join', (_, ...args: string[]) => {
     return join(...args)
 })
 
 ipcMain.handle('path:basename', (_, p: string) => basename(p))
+ipcMain.handle('path:dirname', (_, p: string) => dirname(p))
 
 ipcMain.handle('app:toggleMaximize', () => {
     if (!win) return;
@@ -184,6 +273,19 @@ ipcMain.handle('app:toggleMaximize', () => {
         win.unmaximize();
     } else {
         win.maximize();
+    }
+});
+
+ipcMain.handle('app:resetIndexedDB', async () => {
+    try {
+        const { session } = require('electron');
+        await session.defaultSession.clearStorageData({
+            storages: ['indexeddb']
+        });
+        return true;
+    } catch (e) {
+        console.error('app:resetIndexedDB error:', e);
+        return false;
     }
 });
 
@@ -237,6 +339,7 @@ app.on('activate', () => {
 })
 
 app.whenReady().then(() => {
-    dicomService = new DICOMService();
+    new DICOMService();
+    createDefaultMenu();
     createWindow()
 })

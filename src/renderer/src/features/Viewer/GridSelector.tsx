@@ -10,7 +10,7 @@ export const GridSelector = ({ currentLayout, onChange }: Props) => {
     const [isOpen, setIsOpen] = useState(false);
     const [hoverLayout, setHoverLayout] = useState<{ rows: number; cols: number } | null>(null);
 
-    const maxRows = 2;
+    const maxRows = 3;
     const maxCols = 4;
 
     const rows = Array.from({ length: maxRows }, (_, i) => i + 1);
@@ -88,7 +88,7 @@ export const GridSelector = ({ currentLayout, onChange }: Props) => {
                         </div>
 
                         <div className="mt-4 pt-3 border-t border-gray-100 flex justify-between items-center text-[9px] font-bold text-gray-400">
-                            <span>Max 4×2</span>
+                            <span>Max 4×3</span>
                             <span className="text-peregrine-accent/50 uppercase tracking-tighter">Peregrine Grid</span>
                         </div>
                     </div>

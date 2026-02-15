@@ -13,6 +13,9 @@ interface SettingsContextType {
     setShowSettings: (show: boolean) => void;
     activeSection: 'general' | 'pacs';
     setActiveSection: (section: 'general' | 'pacs') => void;
+    thumbnailCols: number;
+    setThumbnailCols: (cols: number) => void;
+    isLoaded: boolean;
 }
 
 const SettingsContext = createContext<SettingsContextType>({
@@ -25,7 +28,10 @@ const SettingsContext = createContext<SettingsContextType>({
     showSettings: false,
     setShowSettings: () => { },
     activeSection: 'general',
-    setActiveSection: () => { }
+    setActiveSection: () => { },
+    thumbnailCols: 6,
+    setThumbnailCols: () => { },
+    isLoaded: false
 });
 
 export const useSettings = () => useContext(SettingsContext);
@@ -36,7 +42,8 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const [isUpdating, setIsUpdating] = useState(false);
     const [lastUpdateStatus, setLastUpdateStatus] = useState<'success' | 'error' | null>(null);
     const [showSettings, setShowSettings] = useState(false);
-    const [activeSection, setActiveSection] = useState<'general' | 'pacs'>('general');
+    const [activeSection, setActiveSectionState] = useState<'general' | 'pacs'>('general');
+    const [thumbnailCols, setThumbnailColsState] = useState(6);
     const [isLoaded, setIsLoaded] = useState(false);
 
     // Robust Persistence Initialization
@@ -58,12 +65,18 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
                     if (settings.viewMode) setViewModeState(settings.viewMode);
                     if (settings.databasePath) setDatabasePathState(settings.databasePath);
+                    if (settings.activeSection) setActiveSectionState(settings.activeSection);
+                    if (settings.thumbnailCols) setThumbnailColsState(settings.thumbnailCols);
                 } else {
                     // 2. Fallback to localStorage if no file
                     const savedMode = localStorage.getItem('peregrine_view_mode');
                     const savedPath = localStorage.getItem('peregrine_database_path');
+                    const savedSection = localStorage.getItem('peregrine_settings_active_section');
+                    const savedCols = localStorage.getItem('peregrine_thumbnail_cols');
 
                     if (savedMode === 'patient' || savedMode === 'study') setViewModeState(savedMode);
+                    if (savedSection === 'general' || savedSection === 'pacs') setActiveSectionState(savedSection);
+                    if (savedCols) setThumbnailColsState(parseInt(savedCols));
                     if (savedPath) {
                         setDatabasePathState(savedPath);
                     } else {
@@ -93,7 +106,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 // @ts-ignore
                 const settingsFile = await window.electron.join(userData, 'settings.json');
 
-                const current = { viewMode, databasePath };
+                const current = { viewMode, databasePath, activeSection, thumbnailCols };
                 const data = new TextEncoder().encode(JSON.stringify(current, null, 2));
 
                 // @ts-ignore
@@ -102,6 +115,8 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 // Keep localStorage in sync as backup
                 localStorage.setItem('peregrine_view_mode', viewMode);
                 if (databasePath) localStorage.setItem('peregrine_database_path', databasePath);
+                localStorage.setItem('peregrine_settings_active_section', activeSection);
+                localStorage.setItem('peregrine_thumbnail_cols', thumbnailCols.toString());
 
                 console.log('SettingsContext: Persisted settings to disk');
             } catch (e) {
@@ -110,9 +125,11 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         };
 
         persist();
-    }, [viewMode, databasePath, isLoaded]);
+    }, [viewMode, databasePath, activeSection, thumbnailCols, isLoaded]);
 
     const setViewMode = (mode: ViewModeSetting) => setViewModeState(mode);
+    const setActiveSection = (section: 'general' | 'pacs') => setActiveSectionState(section);
+    const setThumbnailCols = (cols: number) => setThumbnailColsState(cols);
     const setDatabasePath = async (path: string) => {
         setIsUpdating(true);
         setLastUpdateStatus(null);
@@ -142,7 +159,10 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             showSettings,
             setShowSettings,
             activeSection,
-            setActiveSection
+            setActiveSection,
+            thumbnailCols,
+            setThumbnailCols,
+            isLoaded
         }}>
             {children}
         </SettingsContext.Provider>

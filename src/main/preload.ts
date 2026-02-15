@@ -14,8 +14,11 @@ const api = {
     copyFile: (src: string, dest: string) => ipcRenderer.invoke('fs:copyFile', src, dest),
     join: (...args: string[]) => ipcRenderer.invoke('path:join', ...args),
     basename: (path: string) => ipcRenderer.invoke('path:basename', path),
+    dirname: (path: string) => ipcRenderer.invoke('path:dirname', path),
     unlink: (path: string) => ipcRenderer.invoke('fs:unlink', path),
+    stat: (path: string) => ipcRenderer.invoke('fs:stat', path),
     toggleMaximize: () => ipcRenderer.invoke('app:toggleMaximize'),
+    resetIndexedDB: () => ipcRenderer.invoke('app:resetIndexedDB'),
     returnToDatabase: () => ipcRenderer.invoke('app:returnToDatabase'),
     pacs: {
         echo: (node: any) => ipcRenderer.invoke('pacs:echo', node),

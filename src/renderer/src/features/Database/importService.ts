@@ -144,6 +144,7 @@ const prepareMetadata = (meta: any, filePath: string, fileSize: number, managedD
         studyDescription: String(meta.studyDescription || ''),
         patientId: patientGlobalId,
         accessionNumber: String(meta.accessionNumber || ''),
+        institutionName: String(meta.institutionName || ''),
         modalitiesInStudy: [String(meta.modality || 'OT')],
         ImportDateTime: new Date().toISOString()
     };
@@ -209,20 +210,34 @@ export const importFiles = async (
         managedDir = await window.electron.join(userData, 'PeregrineData', 'DICOM');
     }
 
-    // Resolve files
-    for (const path of filePaths) {
-        try {
-            // @ts-ignore
-            const files = await window.electron.readdirRecursive(path);
-            if (files && files.length > 0) allFilePaths.push(...files);
-            else allFilePaths.push(path);
-        } catch (e) { allFilePaths.push(path); }
+    // Resolve files - avoid calling readdirRecursive on every path if we already have a long list of files
+    // Usually, if we have > 1 path, they are either already files or a few top-level folders
+    if (filePaths.length > 50) {
+        // High probability they are already resolved files (e.g. from a recursive scan elsewhere)
+        allFilePaths.push(...filePaths);
+    } else {
+        for (const path of filePaths) {
+            try {
+                // Check if it's a directory first to avoid unnecessary recursion logic internally
+                // @ts-ignore
+                const s = await window.electron.stat(path);
+                if (s && s.isDirectory) {
+                    // @ts-ignore
+                    const files = await window.electron.readdirRecursive(path);
+                    if (files && files.length > 0) allFilePaths.push(...files);
+                } else {
+                    allFilePaths.push(path);
+                }
+            } catch (e) {
+                allFilePaths.push(path);
+            }
+        }
     }
 
     const totalFiles = allFilePaths.length;
-    const patientsMap = new Map();
-    const studiesMap = new Map();
-    const tempGroupMap = new Map();
+    const patientsMap = new Map<string, any>();
+    const studiesMap = new Map<string, any>();
+    const tempGroupMap = new Map<string, any>();
 
     for (let i = 0; i < totalFiles; i++) {
         const filePath = allFilePaths[i];

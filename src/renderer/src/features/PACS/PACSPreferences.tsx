@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { usePACS } from './PACSProvider';
 import { PACSServer } from './pacsClient';
-import { Server, Play, Square, Plus, Trash2, Edit2, ShieldCheck, Globe, Activity, FileText, ChevronDown, ChevronRight, X, Check } from 'lucide-react';
+import { Server, Play, Square, Plus, Trash2, Edit2, Globe, Activity, FileText, ChevronRight, X, Check, AlertCircle } from 'lucide-react';
 
 export const PACSPreferences: React.FC = () => {
     const {
@@ -47,119 +47,153 @@ export const PACSPreferences: React.FC = () => {
     };
 
     return (
-        <div className="flex flex-col h-[500px] bg-gray-50/50">
-            {/* 1. Local Node Status Bar (Always Visible) */}
-            <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm z-10">
-                <div className="flex items-center gap-4">
-                    <div className={`w-3 h-3 rounded-full ${localListener.isRunning ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse' : 'bg-gray-300'}`} />
-                    <div>
-                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Local Listener</h3>
-                        <div className="flex items-center gap-2">
-                            <span className="text-lg font-bold text-gray-800">{localListener.aeTitle}</span>
-                            <span className="text-sm text-gray-400 font-mono">:{localListener.port}</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                    {!localListener.isRunning && (
-                        <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
-                            <input
-                                className="w-24 px-2 py-1 text-xs font-mono bg-transparent outline-none border-r border-gray-300 uppercase placeholder-gray-400"
-                                value={localListener.aeTitle}
-                                onChange={e => setLocalListener({ ...localListener, aeTitle: e.target.value.toUpperCase() })}
-                                placeholder="AET"
-                            />
-                            <input
-                                className="w-16 px-2 py-1 text-xs font-mono bg-transparent outline-none"
-                                type="number"
-                                value={localListener.port}
-                                onChange={e => setLocalListener({ ...localListener, port: parseInt(e.target.value) || 104 })}
-                                placeholder="Port"
-                            />
-                        </div>
-                    )}
-                    <button
-                        onClick={toggleListener}
-                        className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all shadow-sm ${localListener.isRunning
-                            ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100'
-                            : 'bg-green-50 text-green-600 border border-green-200 hover:bg-green-100'
-                            }`}
-                    >
-                        {localListener.isRunning ? <Square size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" />}
-                        {localListener.isRunning ? 'Stop' : 'Start'}
-                    </button>
-                </div>
+        <div className="flex flex-col animate-in fade-in slide-in-from-right-4 duration-500 pb-12">
+            {/* Header Info */}
+            <div className="px-6 py-4 space-y-1 bg-white border-b border-gray-100 shrink-0 sticky top-0 z-20">
+                <h3 className="text-xl font-black text-gray-900 tracking-tight">PACS / Network</h3>
+                <p className="text-xs text-gray-500 font-medium">Manage DICOM communication and connecting medical nodes.</p>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="p-6 space-y-8">
                 {error && (
-                    <div className="p-3 bg-red-100 text-red-700 rounded-lg text-xs font-bold flex items-center gap-2">
-                        <ShieldCheck size={14} />
+                    <div className="p-4 bg-red-50 border border-red-100 text-red-700 rounded-2xl text-[10px] font-black uppercase tracking-wider flex items-center gap-3 animate-in shake duration-500">
+                        <AlertCircle size={16} />
                         {error}
                     </div>
                 )}
 
-                {/* 2. Remote Nodes List */}
-                <div className="space-y-4">
+                {/* 1. Local Node Status Card */}
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] p-6 space-y-4 hover:shadow-[0_8px_30px_-4px_rgba(0,0,0,0.08)] transition-all duration-300">
                     <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2">
-                            <Globe size={16} className="text-blue-500" />
-                            Remote Nodes
-                        </h3>
+                        <div className="flex items-center gap-4 shrink-0">
+                            <div className={`relative flex items-center justify-center w-12 h-12 rounded-2xl transition-colors duration-500 ${localListener.isRunning ? 'bg-green-50 text-green-500' : 'bg-gray-50 text-gray-300'}`}>
+                                <Activity size={24} className={localListener.isRunning ? 'animate-pulse' : ''} />
+                                {localListener.isRunning && (
+                                    <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                                    </span>
+                                )}
+                            </div>
+                            <div className="min-w-[120px]">
+                                <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Local Listener</h3>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-lg font-black text-gray-800 tracking-tight truncate max-w-[150px]">{localListener.aeTitle}</span>
+                                    <span className="text-xs font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded-md">:{localListener.port}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-6 overflow-hidden">
+                            {!localListener.isRunning && (
+                                <div className="flex items-center gap-2 bg-gray-50 p-1.5 rounded-xl border border-gray-100 group/input focus-within:border-peregrine-accent focus-within:bg-white transition-all">
+                                    <div className="flex flex-col px-1">
+                                        <span className="text-[8px] font-black text-gray-400 uppercase">AE Title</span>
+                                        <input
+                                            className="w-28 py-0.5 text-xs font-mono bg-transparent outline-none uppercase placeholder-gray-300 focus:text-peregrine-accent"
+                                            value={localListener.aeTitle}
+                                            onChange={e => setLocalListener({ ...localListener, aeTitle: e.target.value.toUpperCase() })}
+                                            placeholder="AET"
+                                        />
+                                    </div>
+                                    <div className="w-px h-6 bg-gray-200" />
+                                    <div className="flex flex-col px-1">
+                                        <span className="text-[8px] font-black text-gray-400 uppercase">Port</span>
+                                        <input
+                                            className="w-16 py-0.5 text-xs font-mono bg-transparent outline-none focus:text-peregrine-accent"
+                                            type="number"
+                                            value={localListener.port}
+                                            onChange={e => setLocalListener({ ...localListener, port: parseInt(e.target.value) || 104 })}
+                                            placeholder="Port"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                            <button
+                                onClick={toggleListener}
+                                className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-4 transition-all shadow-lg active:scale-[0.98] shrink-0 ${localListener.isRunning
+                                    ? 'bg-white border-2 border-red-100 text-red-500 hover:bg-red-50 shadow-red-500/5'
+                                    : 'bg-green-500 text-white hover:bg-green-600 shadow-green-500/20'
+                                    }`}
+                            >
+                                {localListener.isRunning ? <Square size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
+                                {localListener.isRunning ? 'Stop Server' : 'Start Server'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 2. Remote Nodes List Card */}
+                <div className="space-y-4">
+                    <div className="flex items-center justify-between px-2">
+                        <div className="flex items-center gap-2">
+                            <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest">Network Nodes</h3>
+                            <span className="bg-blue-50 text-peregrine-accent text-[10px] font-bold px-2 py-0.5 rounded-full">{servers.length}</span>
+                        </div>
                         <button
                             onClick={() => {
                                 setIsEditingServer('new');
                                 setEditServerData({ isDicomWeb: false, port: 104 });
                             }}
-                            className="bg-peregrine-accent hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all"
+                            className="bg-peregrine-accent hover:bg-blue-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-blue-500/20 transition-all active:scale-[0.98]"
                         >
                             <Plus size={14} />
-                            Add Node
+                            Add Cluster Node
                         </button>
                     </div>
 
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                        <table className="w-full text-left text-xs">
-                            <thead className="bg-gray-50 border-b border-gray-100 text-gray-500 uppercase tracking-wider font-semibold">
+                    <div className="bg-white rounded-2xl border border-gray-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] overflow-hidden">
+                        <table className="w-full text-left">
+                            <thead className="bg-gray-50/50 border-b border-gray-100 text-[10px] font-black text-gray-400 uppercase tracking-widest">
                                 <tr>
-                                    <th className="px-4 py-3">Description</th>
-                                    <th className="px-4 py-3">AET</th>
-                                    <th className="px-4 py-3">Host / URL</th>
-                                    <th className="px-4 py-3 w-24">Status</th>
-                                    <th className="px-4 py-3 w-20 text-right">Actions</th>
+                                    <th className="px-6 py-4">Description</th>
+                                    <th className="px-6 py-4">AET</th>
+                                    <th className="px-6 py-4">Addressing</th>
+                                    <th className="px-6 py-4 w-32">Status</th>
+                                    <th className="px-6 py-4 w-24 text-right pr-8">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-gray-100">
+                            <tbody className="divide-y divide-gray-50">
                                 {servers.map(server => (
-                                    <tr key={server.id} className="group hover:bg-blue-50/30 transition-colors">
-                                        <td className="px-4 py-3 font-medium text-gray-800 flex items-center gap-2">
-                                            {server.isDicomWeb ? <Globe size={14} className="text-purple-400" /> : <Server size={14} className="text-blue-400" />}
-                                            {server.name}
+                                    <tr key={server.id} className="group hover:bg-blue-50/20 transition-colors">
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-3">
+                                                <div className={`p-2 rounded-xl ${server.isDicomWeb ? 'bg-purple-50 text-purple-500' : 'bg-blue-50 text-blue-500'}`}>
+                                                    {server.isDicomWeb ? <Globe size={14} /> : <Server size={14} />}
+                                                </div>
+                                                <div className="flex flex-col">
+                                                    <span className="text-xs font-bold text-gray-800">{server.name}</span>
+                                                    <span className="text-[9px] text-gray-400 font-bold uppercase tracking-tighter">{server.isDicomWeb ? 'DICOM-WEB' : 'DIMSE'}</span>
+                                                </div>
+                                            </div>
                                         </td>
-                                        <td className="px-4 py-3 font-mono text-gray-600">{server.aeTitle}</td>
-                                        <td className="px-4 py-3 text-gray-500 font-mono text-[10px] truncate max-w-[150px]">
-                                            {server.isDicomWeb ? server.url : `${server.address}:${server.port}`}
+                                        <td className="px-6 py-4">
+                                            <span className="text-[10px] font-mono font-bold text-gray-500 bg-gray-50 px-2 py-0.5 rounded">{server.aeTitle}</span>
                                         </td>
-                                        <td className="px-4 py-3">
-                                            <div className="flex items-center gap-1.5">
-                                                <div className={`w-1.5 h-1.5 rounded-full ${server.status === 'online' ? 'bg-green-500' : server.status === 'offline' ? 'bg-red-400' : 'bg-gray-300'}`} />
-                                                <span className={`text-[10px] font-bold uppercase ${server.status === 'online' ? 'text-green-600' : server.status === 'offline' ? 'text-red-500' : 'text-gray-400'}`}>
+                                        <td className="px-6 py-4">
+                                            <span className="text-[10px] font-mono text-gray-400 truncate max-w-[180px] block">
+                                                {server.isDicomWeb ? server.url : `${server.address}:${server.port}`}
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${server.status === 'online' ? 'bg-green-50 text-green-600' : server.status === 'offline' ? 'bg-red-50 text-red-500' : 'bg-gray-50 text-gray-400'}`}>
+                                                <div className={`w-1.5 h-1.5 rounded-full ${server.status === 'online' ? 'bg-green-500 animate-pulse' : server.status === 'offline' ? 'bg-red-400' : 'bg-gray-300'}`} />
+                                                <span className="text-[9px] font-black uppercase tracking-tight">
                                                     {server.status || 'Checking'}
                                                 </span>
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 text-right">
+                                        <td className="px-6 py-4 text-right pr-8">
                                             <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                                 <button
                                                     onClick={() => { setIsEditingServer(server.id); setEditServerData(server); }}
-                                                    className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                                                    className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors"
                                                 >
                                                     <Edit2 size={12} />
                                                 </button>
                                                 <button
                                                     onClick={() => handleDeleteServer(server.id)}
-                                                    className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
+                                                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
                                                 >
                                                     <Trash2 size={12} />
                                                 </button>
@@ -169,8 +203,11 @@ export const PACSPreferences: React.FC = () => {
                                 ))}
                                 {servers.length === 0 && (
                                     <tr>
-                                        <td colSpan={5} className="p-8 text-center text-gray-400 text-xs italic bg-gray-50/50">
-                                            No PACS nodes configured. Add one to start.
+                                        <td colSpan={5} className="p-12 text-center">
+                                            <div className="flex flex-col items-center gap-2 opacity-30">
+                                                <Globe size={48} className="text-gray-400" />
+                                                <p className="text-xs font-bold text-gray-500 italic">No network nodes found.</p>
+                                            </div>
                                         </td>
                                     </tr>
                                 )}
@@ -179,27 +216,29 @@ export const PACSPreferences: React.FC = () => {
                     </div>
                 </div>
 
-                {/* 3. Advanced Settings (Collapsible) */}
-                <div className="border-t border-gray-200 pt-4">
+                {/* 3. Advanced Configuration Cards */}
+                <div className="space-y-4">
                     <button
                         onClick={() => setShowAdvanced(!showAdvanced)}
-                        className="flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-gray-800 transition-colors w-full"
+                        className="flex items-center gap-2 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] hover:text-gray-800 transition-colors w-full px-2"
                     >
-                        {showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                        Advanced Configuration & Logs
+                        <ChevronRight size={14} className={`transition-transform duration-300 ${showAdvanced ? 'rotate-90' : ''}`} />
+                        Advanced Ops & Telemetry
                     </button>
 
                     {showAdvanced && (
-                        <div className="mt-4 grid grid-cols-2 gap-4 animate-in slide-in-from-top-2 duration-200">
-                            <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                                <h4 className="text-xs font-bold text-gray-700 mb-3 flex items-center gap-2">
-                                    <Activity size={14} className="text-orange-400" />
-                                    Network Timeouts
-                                </h4>
-                                <div className="space-y-2">
-                                    <div className="flex justify-between mb-1">
-                                        <label className="block text-xs font-bold text-gray-500">Association Timeout</label>
-                                        <span className="text-xs font-mono font-bold text-gray-600">{associationTimeout}s</span>
+                        <div className="grid grid-cols-2 gap-6 animate-in slide-in-from-top-4 duration-500">
+                            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] space-y-4">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-8 h-8 rounded-xl bg-orange-50 flex items-center justify-center text-orange-500">
+                                        <Activity size={16} />
+                                    </div>
+                                    <h4 className="text-xs font-black text-gray-800 uppercase tracking-wider">Timeouts</h4>
+                                </div>
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-end">
+                                        <label className="text-[10px] font-bold text-gray-400 uppercase">Handshake Delay</label>
+                                        <span className="text-xs font-mono font-black text-peregrine-accent">{associationTimeout}s</span>
                                     </div>
                                     <input
                                         type="range" min="5" max="120" step="5"
@@ -207,35 +246,32 @@ export const PACSPreferences: React.FC = () => {
                                         onChange={(e) => setAssociationTimeout(parseInt(e.target.value))}
                                         className="w-full h-1.5 bg-gray-100 rounded-lg appearance-none cursor-pointer accent-peregrine-accent"
                                     />
+                                    <p className="text-[9px] text-gray-400 leading-relaxed font-medium">Controls the DICOM association timeout limit in seconds.</p>
                                 </div>
                             </div>
 
-                            <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                                <h4 className="text-xs font-bold text-gray-700 mb-3 flex items-center gap-2">
-                                    <FileText size={14} className="text-gray-400" />
-                                    Troubleshooting
-                                </h4>
+                            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] space-y-4">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-8 h-8 rounded-xl bg-slate-50 flex items-center justify-center text-slate-500">
+                                        <FileText size={16} />
+                                    </div>
+                                    <h4 className="text-xs font-black text-gray-800 uppercase tracking-wider">Diagnostics</h4>
+                                </div>
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between">
-                                        <span className="text-xs text-gray-600">Enable Debug Logs</span>
+                                        <span className="text-[10px] font-bold text-gray-500 uppercase">Verbose Engine Logs</span>
                                         <button
                                             onClick={() => setDebugLogging(!debugLoggingEnabled)}
-                                            className={`w-8 h-4 rounded-full relative transition-colors duration-200 ${debugLoggingEnabled ? 'bg-peregrine-accent' : 'bg-gray-200'}`}
+                                            className={`w-9 h-5 rounded-full relative transition-colors duration-300 ${debugLoggingEnabled ? 'bg-peregrine-accent shadow-inner' : 'bg-gray-100'}`}
                                         >
-                                            <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow-sm transition-all duration-200 ${debugLoggingEnabled ? 'left-4.5' : 'left-0.5'}`} style={{ left: debugLoggingEnabled ? '1.1rem' : '0.125rem' }} />
-                                        </button>
-                                    </div>
-                                    <div className="flex items-center justify-between opacity-50 pointer-events-none">
-                                        <span className="text-xs text-gray-600">Verbose PDU Dump</span>
-                                        <button className="w-8 h-4 bg-gray-200 rounded-full relative">
-                                            <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full shadow-sm" />
+                                            <div className={`absolute top-1 w-3 h-3 bg-white rounded-full shadow-md transition-all duration-300 ${debugLoggingEnabled ? 'left-5' : 'left-1'}`} />
                                         </button>
                                     </div>
                                     <button
                                         onClick={openLogFile}
-                                        className="w-full mt-2 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-600 text-[10px] font-bold uppercase border border-gray-200 rounded flex items-center justify-center gap-2"
+                                        className="w-full py-2 bg-gray-50 hover:bg-gray-100 text-gray-600 text-[10px] font-black uppercase tracking-widest border border-gray-100 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
                                     >
-                                        Open Log File
+                                        Inspect Log Stream
                                     </button>
                                 </div>
                             </div>
@@ -246,106 +282,109 @@ export const PACSPreferences: React.FC = () => {
 
             {/* Modal for Editing */}
             {isEditingServer && (
-                <div className="absolute inset-0 bg-black/20 backdrop-blur-[1px] flex items-center justify-center z-50 p-4">
-                    <div className="bg-white w-full max-w-sm rounded-xl shadow-2xl border border-gray-100 overflow-hidden animate-in zoom-in-95 duration-200">
-                        <div className="px-4 py-3 border-b border-gray-50 bg-gray-50/50 flex justify-between items-center">
-                            <h3 className="text-sm font-bold text-gray-800">
-                                {isEditingServer === 'new' ? 'New PACS Node' : 'Edit Node'}
+                <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[200] p-4 animate-in fade-in duration-300">
+                    <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-gray-100 overflow-hidden animate-in zoom-in-95 duration-300">
+                        <div className="px-6 py-4 border-b border-gray-50 bg-gray-50/50 flex justify-between items-center">
+                            <h3 className="text-sm font-black text-gray-900 tracking-tight">
+                                {isEditingServer === 'new' ? 'New Connection' : 'Edit Connection'}
                             </h3>
-                            <button onClick={() => setIsEditingServer(null)} className="text-gray-400 hover:text-gray-600">
-                                <X size={16} />
+                            <button onClick={() => setIsEditingServer(null)} className="text-gray-400 hover:text-gray-900 transition-colors">
+                                <X size={20} strokeWidth={3} />
                             </button>
                         </div>
-                        <div className="p-4 space-y-3">
-                            <div>
-                                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Description</label>
+                        <div className="p-6 space-y-6">
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Node Identity</label>
                                 <input
                                     autoFocus
-                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:bg-white focus:border-peregrine-accent focus:ring-1 focus:ring-peregrine-accent outline-none transition-all"
+                                    className="w-full px-4 py-3 border border-gray-100 rounded-xl text-sm bg-gray-50/50 focus:bg-white focus:border-peregrine-accent focus:ring-4 focus:ring-blue-500/10 outline-none transition-all placeholder-gray-300"
                                     value={editServerData.name || ''}
                                     onChange={e => setEditServerData({ ...editServerData, name: e.target.value })}
-                                    placeholder="e.g. Main PACS"
+                                    placeholder="e.g. Regional PACS Archive"
                                 />
                             </div>
 
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="col-span-2">
-                                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Node Type</label>
-                                    <div className="flex bg-gray-100 p-1 rounded-lg">
+                            <div className="space-y-4">
+                                <div className="space-y-2">
+                                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Protocol Type</label>
+                                    <div className="flex bg-gray-50 p-1.5 rounded-2xl border border-gray-100">
                                         <button
                                             onClick={() => setEditServerData({ ...editServerData, isDicomWeb: false })}
-                                            className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${!editServerData.isDicomWeb ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                                            className={`flex-1 py-2 text-xs font-black rounded-xl transition-all ${!editServerData.isDicomWeb ? 'bg-white text-peregrine-accent shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
                                         >
-                                            DIMSE (Standard)
+                                            DIMSE Node
                                         </button>
                                         <button
                                             onClick={() => setEditServerData({ ...editServerData, isDicomWeb: true })}
-                                            className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${editServerData.isDicomWeb ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                                            className={`flex-1 py-2 text-xs font-black rounded-xl transition-all ${editServerData.isDicomWeb ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
                                         >
                                             DICOMweb
                                         </button>
                                     </div>
                                 </div>
 
-                                <div>
-                                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">AE Title</label>
-                                    <input
-                                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono uppercase focus:border-peregrine-accent focus:ring-1 focus:ring-peregrine-accent outline-none"
-                                        value={editServerData.aeTitle || ''}
-                                        onChange={e => setEditServerData({ ...editServerData, aeTitle: e.target.value.toUpperCase() })}
-                                        placeholder="REMOTE_AET"
-                                    />
-                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">AE Title</label>
+                                        <input
+                                            className="w-full px-4 py-3 border border-gray-100 rounded-xl text-sm font-mono font-bold uppercase focus:border-peregrine-accent focus:ring-4 focus:ring-blue-500/10 outline-none bg-gray-50/50 focus:bg-white transition-all"
+                                            value={editServerData.aeTitle || ''}
+                                            onChange={e => setEditServerData({ ...editServerData, aeTitle: e.target.value.toUpperCase() })}
+                                            placeholder="REMOTE_AET"
+                                        />
+                                    </div>
 
-                                {!editServerData.isDicomWeb ? (
-                                    <>
-                                        <div>
-                                            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Port</label>
+                                    {!editServerData.isDicomWeb ? (
+                                        <div className="space-y-2">
+                                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Port</label>
                                             <input
                                                 type="number"
-                                                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:border-peregrine-accent focus:ring-1 focus:ring-peregrine-accent outline-none"
+                                                className="w-full px-4 py-3 border border-gray-100 rounded-xl text-sm font-mono font-bold focus:border-peregrine-accent focus:ring-4 focus:ring-blue-500/10 outline-none bg-gray-50/50 focus:bg-white transition-all"
                                                 value={editServerData.port || ''}
                                                 onChange={e => setEditServerData({ ...editServerData, port: parseInt(e.target.value) })}
                                                 placeholder="104"
                                             />
                                         </div>
-                                        <div className="col-span-2">
-                                            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">IP Address / Hostname</label>
-                                            <input
-                                                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:border-peregrine-accent focus:ring-1 focus:ring-peregrine-accent outline-none"
-                                                value={editServerData.address || ''}
-                                                onChange={e => setEditServerData({ ...editServerData, address: e.target.value })}
-                                                placeholder="192.168.1.100"
-                                            />
-                                        </div>
-                                    </>
-                                ) : (
-                                    <div className="col-span-2">
-                                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">WADO-RS URL</label>
+                                    ) : null}
+                                </div>
+
+                                {!editServerData.isDicomWeb ? (
+                                    <div className="space-y-2">
+                                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Host Address</label>
                                         <input
-                                            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:border-peregrine-accent focus:ring-1 focus:ring-peregrine-accent outline-none"
+                                            className="w-full px-4 py-3 border border-gray-100 rounded-xl text-sm font-mono focus:border-peregrine-accent focus:ring-4 focus:ring-blue-500/10 outline-none bg-gray-50/50 focus:bg-white transition-all"
+                                            value={editServerData.address || ''}
+                                            onChange={e => setEditServerData({ ...editServerData, address: e.target.value })}
+                                            placeholder="192.168.1.XXX"
+                                        />
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2 shrink-0">
+                                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Base URL (WADO-RS)</label>
+                                        <input
+                                            className="w-full px-4 py-3 border border-gray-100 rounded-xl text-sm font-mono focus:border-peregrine-accent focus:ring-4 focus:ring-blue-500/10 outline-none bg-gray-50/50 focus:bg-white transition-all"
                                             value={editServerData.url || ''}
                                             onChange={e => setEditServerData({ ...editServerData, url: e.target.value })}
-                                            placeholder="http://server/dicomweb"
+                                            placeholder="https://pacs.hospital.org/dicomweb"
                                         />
                                     </div>
                                 )}
                             </div>
                         </div>
-                        <div className="p-4 bg-gray-50 flex justify-end gap-3">
+                        <div className="p-6 bg-gray-50/50 flex justify-end gap-3 border-t border-gray-100">
                             <button
                                 onClick={() => setIsEditingServer(null)}
-                                className="px-4 py-2 text-xs font-bold text-gray-500 hover:text-gray-700"
+                                className="px-6 py-2.5 text-xs font-black text-gray-400 hover:text-gray-900 transition-colors uppercase tracking-widest"
                             >
-                                Cancel
+                                Dismiss
                             </button>
                             <button
                                 onClick={handleSaveServer}
                                 disabled={!editServerData.name || !editServerData.aeTitle}
-                                className="px-6 py-2 bg-peregrine-accent text-white text-xs font-bold rounded-lg shadow-sm hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                className="px-8 py-2.5 bg-peregrine-accent text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-lg shadow-blue-500/20 hover:bg-blue-600 disabled:opacity-30 disabled:scale-100 transition-all active:scale-[0.98] flex items-center gap-2"
                             >
-                                <Check size={14} />
-                                Save Node
+                                <Check size={14} strokeWidth={3} />
+                                Establish Node
                             </button>
                         </div>
                     </div>

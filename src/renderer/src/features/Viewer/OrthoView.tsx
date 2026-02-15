@@ -30,6 +30,7 @@ import {
     CobbAngleTool,
     Enums as csToolsEnums,
     utilities as csToolsUtils,
+    CrosshairsTool,
 } from '@cornerstonejs/tools';
 import { initCornerstone } from './init';
 import { useDatabase } from '../Database/DatabaseProvider';
@@ -89,7 +90,7 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
         [
             StackScrollMouseWheelTool, WindowLevelTool, PanTool, ZoomTool, MagnifyTool,
             LengthTool, AngleTool, RectangleROITool, EllipticalROITool, ProbeTool,
-            ArrowAnnotateTool, BidirectionalTool, CobbAngleTool
+            ArrowAnnotateTool, BidirectionalTool, CobbAngleTool, CrosshairsTool
         ].forEach(tool => {
             try { addTool(tool); } catch (e) { }
         });
@@ -102,7 +103,7 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
             [
                 StackScrollMouseWheelTool, WindowLevelTool, PanTool, ZoomTool, MagnifyTool,
                 LengthTool, AngleTool, RectangleROITool, EllipticalROITool, ProbeTool,
-                ArrowAnnotateTool, BidirectionalTool, CobbAngleTool
+                ArrowAnnotateTool, BidirectionalTool, CobbAngleTool, CrosshairsTool
             ].forEach(tool => {
                 if (!toolGroup!.hasTool(tool.toolName)) toolGroup!.addTool(tool.toolName);
             });
@@ -164,7 +165,7 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
                 WindowLevelTool.toolName, PanTool.toolName, ZoomTool.toolName, MagnifyTool.toolName,
                 LengthTool.toolName, AngleTool.toolName, RectangleROITool.toolName,
                 EllipticalROITool.toolName, ProbeTool.toolName, ArrowAnnotateTool.toolName,
-                BidirectionalTool.toolName, CobbAngleTool.toolName
+                BidirectionalTool.toolName, CobbAngleTool.toolName, CrosshairsTool.toolName
             ];
             allTools.forEach(tn => {
                 if (toolGroup.hasTool(tn)) toolGroup.setToolPassive(tn);
@@ -183,6 +184,7 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
             else if (activeTool === 'Bidirectional') primary = BidirectionalTool.toolName;
             else if (activeTool === 'Magnify') primary = MagnifyTool.toolName || 'Magnify';
             else if (activeTool === 'Text') primary = ArrowAnnotateTool.toolName || 'ArrowAnnotate';
+            else if (activeTool === 'Crosshairs') primary = CrosshairsTool.toolName;
 
             if (primary && toolGroup.hasTool(primary)) {
                 toolGroup.setToolActive(primary, { bindings: [{ mouseButton: MouseBindings.Primary }] });
@@ -477,6 +479,25 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
 
             // Optional: Manual Sync (as fallback for Crosshairs)
             // We use the Synchronizer for VOI, but for position we have handleClickSync
+
+            // Configure Crosshairs Tool
+            if (tg && orientation === 'MPR') {
+                tg.addTool(CrosshairsTool.toolName, {
+                    viewportScrolled: true,
+                    getChildViewports: (viewportId: string) => {
+                        return [AXIAL_VIEWPORT_ID, SAGITTAL_VIEWPORT_ID, CORONAL_VIEWPORT_ID].filter(id => id !== viewportId);
+                    },
+                    getReferenceLineColor: (viewportId: string) => {
+                        if (viewportId === AXIAL_VIEWPORT_ID) return 'rgb(59, 130, 246)'; // blue-500
+                        if (viewportId === SAGITTAL_VIEWPORT_ID) return 'rgb(234, 179, 8)'; // yellow-500
+                        if (viewportId === CORONAL_VIEWPORT_ID) return 'rgb(34, 197, 94)'; // green-500
+                        return 'rgb(255, 255, 255)';
+                    },
+                    getReferenceLineControllable: () => true,
+                    getReferenceLineDraggable: () => true,
+                    getReferenceLineSlabThicknessControlsOn: () => true,
+                });
+            }
 
             re.render();
         };

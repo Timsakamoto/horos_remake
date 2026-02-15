@@ -17,10 +17,17 @@ export interface ImageDocType {
     imageOrientationPatient?: number[];
     pixelSpacing?: number[];
     sliceThickness?: number;
+    acquisitionNumber?: number;
+    echoNumber?: number;
+    temporalPositionIdentifier?: number;
+    imageType?: string; // Stored as joined string
+    sequenceName?: string;
+    diffusionBValue?: number;
+    dicomSeriesInstanceUID?: string;
 }
 
 export const ImageSchema: RxJsonSchema<ImageDocType> = {
-    version: 4,
+    version: 6,
     primaryKey: 'sopInstanceUID',
     type: 'object',
     properties: {
@@ -76,6 +83,28 @@ export const ImageSchema: RxJsonSchema<ImageDocType> = {
         },
         sliceThickness: {
             type: 'number'
+        },
+        acquisitionNumber: {
+            type: 'number'
+        },
+        echoNumber: {
+            type: 'number'
+        },
+        temporalPositionIdentifier: {
+            type: 'number'
+        },
+        imageType: {
+            type: 'string'
+        },
+        sequenceName: {
+            type: 'string'
+        },
+        diffusionBValue: {
+            type: 'number'
+        },
+        dicomSeriesInstanceUID: {
+            type: 'string',
+            maxLength: 100
         }
     },
     required: ['sopInstanceUID', 'seriesInstanceUID', 'filePath'],

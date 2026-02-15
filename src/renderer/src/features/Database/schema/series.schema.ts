@@ -10,10 +10,11 @@ export interface SeriesDocType {
     bodyPartExamined: string;
     protocolName: string;
     studyInstanceUID: string;
+    dicomSeriesInstanceUID?: string;
 }
 
 export const SeriesSchema: RxJsonSchema<SeriesDocType> = {
-    version: 1,
+    version: 2,
     primaryKey: 'seriesInstanceUID',
     type: 'object',
     properties: {
@@ -45,6 +46,10 @@ export const SeriesSchema: RxJsonSchema<SeriesDocType> = {
         studyInstanceUID: {
             type: 'string',
             ref: 'T_Study'
+        },
+        dicomSeriesInstanceUID: {
+            type: 'string',
+            maxLength: 100
         }
     },
     required: ['seriesInstanceUID', 'studyInstanceUID'],

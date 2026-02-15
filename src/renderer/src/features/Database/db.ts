@@ -26,7 +26,8 @@ const _create = async (): Promise<AntigravityDatabase> => {
     try {
         const db = await createRxDatabase<AntigravityDatabaseCollections>({
             name: 'antigravitydb',
-            storage: getRxStorageDexie()
+            storage: getRxStorageDexie(),
+            ignoreDuplicate: true
         });
 
         console.log('DatabaseService: Adding collections...');
@@ -61,6 +62,10 @@ const _create = async (): Promise<AntigravityDatabase> => {
                         numberOfSeriesRelatedInstances: 0,
                         bodyPartExamined: '',
                         protocolName: ''
+                    }),
+                    2: (oldDoc) => ({
+                        ...oldDoc,
+                        dicomSeriesInstanceUID: oldDoc.seriesInstanceUID // Before split, they were same
                     })
                 }
             },
@@ -78,7 +83,20 @@ const _create = async (): Promise<AntigravityDatabase> => {
                         windowCenter: 40,
                         windowWidth: 400
                     }),
-                    4: (oldDoc) => oldDoc
+                    4: (oldDoc) => oldDoc,
+                    5: (oldDoc) => ({
+                        ...oldDoc,
+                        acquisitionNumber: 0,
+                        dicomSeriesInstanceUID: oldDoc.seriesInstanceUID
+                    }),
+                    6: (oldDoc) => ({
+                        ...oldDoc,
+                        echoNumber: undefined,
+                        temporalPositionIdentifier: undefined,
+                        imageType: '',
+                        sequenceName: '',
+                        diffusionBValue: undefined
+                    })
                 }
             }
         });
@@ -99,7 +117,56 @@ export const getDatabase = (): Promise<AntigravityDatabase> => {
 };
 
 export const removeDatabase = async () => {
+    const DB_NAME = 'antigravitydb';
     const { removeRxDatabase } = await import('rxdb');
+
+    // 1. Try to destroy active connection
+    if (dbPromise) {
+        try {
+            const db = await dbPromise;
+            await db.destroy();
+            console.log('DatabaseService: Database destroyed');
+        } catch (e) {
+            console.warn('DatabaseService: Error destroying database:', e);
+        }
+    }
     dbPromise = null;
-    await removeRxDatabase('antigravitydb', getRxStorageDexie());
+
+    // 2. Try standard RxDB removal
+    try {
+        await removeRxDatabase(DB_NAME, getRxStorageDexie());
+        console.log('DatabaseService: RxDB removal successful');
+    } catch (e) {
+        console.error('DatabaseService: RxDB removal failed, trying native...', e);
+
+        // 3. NUCLEAR FALLBACK: Native IndexedDB deletion
+        // This is necessary if Dexie/RxDB structures are corrupted and blocking themselves
+        return new Promise<void>((resolve, reject) => {
+            const req = indexedDB.deleteDatabase('dexie-db-' + DB_NAME);
+            req.onsuccess = () => {
+                console.log('DatabaseService: Native removal successful');
+                resolve();
+            };
+            req.onerror = () => {
+                console.error('DatabaseService: Native removal failed, trying supreme reset...');
+                // 4. SUPREME FALLBACK: Main Process Storage Clear
+                // This clears the backing store at the browser profile level
+                // @ts-ignore
+                window.electron.resetIndexedDB()
+                    .then(() => {
+                        console.log('DatabaseService: Supreme reset successful');
+                        resolve();
+                    })
+                    .catch((err: any) => {
+                        console.error('DatabaseService: Supreme reset failed');
+                        reject(err);
+                    });
+            };
+            req.onblocked = () => {
+                console.warn('DatabaseService: Native removal blocked by active connection');
+                // Even if blocked, we might want to resolve to allow reload to break the lock
+                resolve();
+            };
+        });
+    }
 };

@@ -1,12 +1,11 @@
 import { ipcMain, BrowserWindow } from 'electron';
-import { Client, requests, constants } from 'dcmjs-dimse';
 import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { parseStringPromise } from 'xml2js';
 import { JobManager } from './JobManager';
 
-const { CFindRequest, CMoveRequest, CEchoRequest } = requests;
-const { Status } = constants;
+
 
 interface PACSNode {
     aeTitle: string;
@@ -197,130 +196,237 @@ export class DICOMService {
 
     async echo(node: PACSNode): Promise<boolean> {
         this.logInfo(`C-ECHO Initiation to ${node.aeTitle}@${node.address}:${node.port}`);
-        const client = new Client();
-        const request = new CEchoRequest();
+
+        const binPath = this.getDcmtkBinPath('echoscu');
+        if (!binPath) return false;
+
+        const args = ['-v', '-aet', this.currentAeTitle, '-aec', node.aeTitle, node.address, node.port.toString()];
 
         return new Promise((resolve) => {
-            client.addRequest(request);
-            client.on('networkError', (e) => {
-                this.logError(`C-ECHO Network Error: ${e.message}`, e);
+            const process = spawn(binPath, args);
+
+            process.on('close', (code) => {
+                if (code === 0) {
+                    this.logInfo(`C-ECHO Response: Success`);
+                    resolve(true);
+                } else {
+                    this.logWarn(`C-ECHO Response: Failed (Code: ${code})`);
+                    resolve(false);
+                }
+            });
+
+            process.on('error', (err) => {
+                this.logError(`C-ECHO Network Error: ${err.message}`, err);
                 resolve(false);
             });
-            request.on('response', (response) => {
-                const success = response.getStatus() === Status.Success;
-                this.logInfo(`C-ECHO Response: ${success ? 'Success' : 'Failed'}`);
-                resolve(success);
-            });
-            client.send(node.address, node.port, 'PEREGRINE', node.aeTitle);
         });
     }
 
     async search(node: PACSNode, level: string, query: any): Promise<any[]> {
-        const client = new Client();
-        let request;
+        const binPath = this.getDcmtkBinPath('findscu');
+        if (!binPath) return [];
 
-        const finalQuery = { ...query, QueryRetrieveLevel: level };
+        const args = [
+            '-v',
+            '-aet', this.currentAeTitle,
+            '-aec', node.aeTitle,
+            '-P', // Patient Root Information Model
+            '-k', `QueryRetrieveLevel=${level}`,
+            node.address,
+            node.port.toString()
+        ];
 
-        if (level === 'STUDY') {
-            request = CFindRequest.createStudyFindRequest(finalQuery);
-        } else if (level === 'SERIES') {
-            request = CFindRequest.createSeriesFindRequest(finalQuery);
-        } else {
-            request = CFindRequest.createImageFindRequest(finalQuery);
+        // Add query keys
+        for (const [key, value] of Object.entries(query)) {
+            // DCMTK uses (Group,Element)=Value format or Key=Value
+            // For simplicity in this rough implementation, we assume Key=Value works for known tags
+            args.push('-k', `${key}=${value || ''}`);
         }
 
-        const results: any[] = [];
+        // Requested keys (if not in query, add them empty)
+        // This is a simplification; a robust implementation needs a better query builder
+        if (!query['PatientName']) args.push('-k', 'PatientName');
+        if (!query['PatientID']) args.push('-k', 'PatientID');
+        if (!query['StudyDate']) args.push('-k', 'StudyDate');
+        if (!query['StudyTime']) args.push('-k', 'StudyTime');
+        if (!query['AccessionNumber']) args.push('-k', 'AccessionNumber');
+        if (!query['StudyID']) args.push('-k', 'StudyID');
+        if (!query['StudyInstanceUID']) args.push('-k', 'StudyInstanceUID');
+        // Add more keys as needed for database population
+
+        // To parse results, we probably need to output to XML or file, or parse stdout heavily.
+        // findscu -X outputs XML.
+        args.push('-X');
+
+        this.logInfo(`C-FIND Initiation: ${binPath} ${args.join(' ')}`);
 
         return new Promise((resolve, reject) => {
-            client.addRequest(request);
-            request.on('response', (response) => {
-                if (response.getStatus() === Status.Pending) {
-                    const dataset = response.getDataset();
-                    if (dataset) results.push(dataset.getElements());
-                } else if (response.getStatus() === Status.Success) {
-                    resolve(results);
+            const process = spawn(binPath, args);
+            let stdout = '';
+            let stderr = '';
+
+            process.stdout.on('data', (data) => stdout += data.toString());
+            process.stderr.on('data', (data) => stderr += data.toString());
+
+            process.on('close', async (code) => {
+                if (code === 0) {
+                    try {
+                        const results = await this.parseDcmtkXml(stdout);
+                        this.logInfo(`C-FIND Success: Found ${results.length} results`);
+                        resolve(results);
+                    } catch (e) {
+                        this.logError('Failed to parse C-FIND results', e);
+                        resolve([]);
+                    }
+                } else {
+                    this.logWarn(`C-FIND Failed (Code: ${code})`);
+                    this.logWarn(`Stderr: ${stderr}`);
+                    resolve([]);
                 }
             });
-            client.on('networkError', (e) => reject(e));
-            client.send(node.address, node.port, 'PEREGRINE', node.aeTitle);
+
+            process.on('error', (err) => {
+                this.logError(`C-FIND Error: ${err.message}`);
+                reject(err);
+            });
         });
     }
 
     async move(node: PACSNode, destinationAet: string, level: string, keys: any, onProgress?: (p: number) => void): Promise<boolean> {
-        const client = new Client();
-        let request: any;
+        const binPath = this.getDcmtkBinPath('movescu');
+        if (!binPath) return false;
 
-        if (level === 'STUDY') {
-            request = CMoveRequest.createStudyMoveRequest(destinationAet, keys.StudyInstanceUID);
-        } else if (level === 'SERIES') {
-            request = CMoveRequest.createSeriesMoveRequest(destinationAet, keys.StudyInstanceUID, keys.SeriesInstanceUID);
-        } else {
-            request = CMoveRequest.createImageMoveRequest(destinationAet, keys.StudyInstanceUID, keys.SeriesInstanceUID, keys.SOPInstanceUID);
-        }
+        const args = [
+            '-v',
+            '-aet', this.currentAeTitle,
+            '-aec', node.aeTitle,
+            '-aem', destinationAet,
+            '-P', // Patient Root
+            '-k', `QueryRetrieveLevel=${level}`,
+            node.address,
+            node.port.toString()
+        ];
+
+        if (keys.StudyInstanceUID) args.push('-k', `StudyInstanceUID=${keys.StudyInstanceUID}`);
+        if (keys.SeriesInstanceUID) args.push('-k', `SeriesInstanceUID=${keys.SeriesInstanceUID}`);
+        if (keys.SOPInstanceUID) args.push('-k', `SOPInstanceUID=${keys.SOPInstanceUID}`);
+
+        this.logInfo(`C-MOVE Initiation: ${binPath} ${args.join(' ')}`);
+
+        // movescu output parsing for progress is tricky. It prints like:
+        // Response: Pending (Sub-Operations: Remaining: 5, Completed: 0, Failed: 0, Warning: 0)
 
         return new Promise((resolve, reject) => {
-            client.addRequest(request);
-            request.on('response', (response: any) => {
-                const status = response.getStatus();
-                if (status === Status.Pending) {
-                    const remaining = response.getRemaining();
-                    const completed = response.getCompleted();
-                    const total = remaining + completed;
-                    if (total > 0 && onProgress) {
-                        onProgress(Math.round((completed / total) * 100));
-                    }
-                } else if (status === Status.Success) {
-                    resolve(true);
-                } else {
-                    this.logWarn(`C-MOVE Response Status: ${status.toString(16)}`);
-                    if (status !== Status.Pending) resolve(false);
+            const process = spawn(binPath, args);
+
+            process.stdout.on('data', (data) => {
+                const msg = data.toString();
+                // Basic progress parsing (Parsing standard movescu output)
+                if (msg.includes('Remaining:')) {
+                    // Extract Remaining and Completed
+                    // This is verbose and might need regex adjustment based on exact output version
+                    if (onProgress) onProgress(50); // Fake progress for now until accurate parsing
                 }
             });
-            client.on('networkError', (e) => reject(e));
-            client.send(node.address, node.port, 'PEREGRINE', node.aeTitle);
+
+            process.stderr.on('data', (data) => {
+                const msg = data.toString();
+                if (msg.includes('E:')) this.logError(`movescu: ${msg}`);
+                else this.logInfo(`movescu: ${msg}`);
+            });
+
+            process.on('close', (code) => {
+                if (code === 0) {
+                    this.logInfo('C-MOVE Success');
+                    resolve(true);
+                } else {
+                    this.logWarn(`C-MOVE Failed (Code: ${code})`);
+                    resolve(false);
+                }
+            });
+
+            process.on('error', (err) => {
+                this.logError(`C-MOVE Error: ${err.message}`);
+                reject(err);
+            });
         });
     }
 
     async store(node: PACSNode, filePaths: string[], onProgress?: (p: number) => void): Promise<boolean> {
-        this.logInfo(`C-STORE Initiation to ${node.aeTitle}@${node.address}:${node.port} (${filePaths.length} files)`);
-        const client = new Client();
-        let successCount = 0;
-        let failCount = 0;
+        const binPath = this.getDcmtkBinPath('storescu');
+        if (!binPath) return false;
+
+        // storescu [options] peer port dcmfile-in...
+        const args = [
+            '-v',
+            '-aet', this.currentAeTitle,
+            '-aec', node.aeTitle,
+            node.address,
+            node.port.toString(),
+            ...filePaths
+        ];
+
+        this.logInfo(`C-STORE Initiation to ${node.aeTitle} (${filePaths.length} files)`);
 
         return new Promise((resolve, reject) => {
-            filePaths.forEach((filePath) => {
-                const request = new requests.CStoreRequest(filePath);
-                client.addRequest(request);
+            const process = spawn(binPath, args);
+            let totalFiles = filePaths.length;
+            let currentFile = 0;
 
-                request.on('response', (response) => {
-                    const status = response.getStatus();
-                    if (status === Status.Success) {
-                        successCount++;
-                    } else {
-                        failCount++;
-                        this.logWarn(`C-STORE Failed for ${filePath}: ${status.toString(16)}`);
-                    }
-
-                    if (onProgress) {
-                        onProgress(Math.round(((successCount + failCount) / filePaths.length) * 100));
-                    }
-                });
+            // storescu outputs one line per file usually
+            process.stdout.on('data', () => {
+                // Approximate progress based on output activity
+                currentFile++;
+                if (onProgress) onProgress(Math.round((currentFile / totalFiles) * 100));
             });
 
-            client.on('networkError', (e) => {
-                this.logError(`C-STORE Network Error: ${e.message}`);
-                reject(e);
+            process.stderr.on('data', (data) => {
+                const msg = data.toString();
+                if (msg.includes('E:')) this.logError(`storescu: ${msg}`);
             });
 
-            client.on('closed', () => {
-                this.logInfo(`C-STORE Complete. Success: ${successCount}, Failed: ${failCount}`);
-                resolve(failCount === 0);
+            process.on('close', (code) => {
+                if (code === 0) {
+                    this.logInfo('C-STORE Success');
+                    resolve(true);
+                } else {
+                    this.logWarn(`C-STORE Failed (Code: ${code})`);
+                    resolve(false);
+                }
             });
 
-            client.send(node.address, node.port, 'PEREGRINE', node.aeTitle);
+            process.on('error', (err) => {
+                this.logError(`C-STORE Error: ${err.message}`);
+                reject(err);
+            });
         });
     }
 
+    private getDcmtkBinPath(binName: string): string | null {
+        const { app } = require('electron');
+        let binPath;
+        if (app.isPackaged) {
+            binPath = path.join(process.resourcesPath, 'bin', binName);
+        } else {
+            binPath = path.join(process.cwd(), 'resources', 'bin', binName);
+        }
+
+        if (process.platform !== 'win32') {
+            try {
+                if (fs.existsSync(binPath)) {
+                    fs.chmodSync(binPath, 0o755);
+                    return binPath;
+                }
+            } catch (e) {
+                this.logWarn(`Failed to chmod ${binName}: ${e}`);
+            }
+        }
+
+        if (fs.existsSync(binPath)) return binPath;
+
+        this.logError(`Binary not found: ${binPath}`);
+        return null;
+    }
     async startListener(aeTitle: string, port: number): Promise<boolean> {
         // Save current config for auto-restart
         this.currentAeTitle = aeTitle;
@@ -480,5 +586,59 @@ export class DICOMService {
                 resolve();
             }
         });
+    }
+
+    private async parseDcmtkXml(xml: string): Promise<any[]> {
+        if (!xml || !xml.trim()) return [];
+
+        try {
+            // findscu -X output might contain multiple root elements (one per result)
+            // We wrap it to ensure valid XML
+            const wrappedXml = `<responses>${xml}</responses>`;
+            let parsed;
+            try {
+                parsed = await parseStringPromise(wrappedXml);
+            } catch (e) {
+                // If wrapping failed, maybe it was valid single root?
+                parsed = await parseStringPromise(xml);
+            }
+
+            if (!parsed || !parsed.responses || !parsed.responses['file-format']) {
+                if (parsed['file-format']) {
+                    // Single result case without wrapper
+                    parsed = { responses: { 'file-format': [parsed['file-format']] } };
+                } else {
+                    return [];
+                }
+            }
+
+            const results: any[] = [];
+            const fileFormats = parsed.responses['file-format'];
+
+            for (const fileFormat of fileFormats) {
+                if (!fileFormat.data_set || !fileFormat.data_set[0] || !fileFormat.data_set[0].element) continue;
+
+                const dataset = fileFormat.data_set[0];
+                const entry: any = {};
+
+                for (const el of dataset.element) {
+                    // element has attributes: tag, vr, len, name
+                    // value is text content
+                    const name = el.$.name; // e.g. PatientName
+                    const val = el._; // Text content if simple value
+
+                    if (name && val) {
+                        // Clean up value (remove nulls, trim)
+                        entry[name] = val.trim();
+                    }
+                }
+                results.push(entry);
+            }
+
+            return results;
+        } catch (e) {
+            this.logError('XML Parsing Error', e);
+            return [];
+        }
     }
 }

@@ -26,6 +26,7 @@ interface Patient {
     studyDescription?: string;
     accessionNumber?: string;
     studyDate?: string;
+    institutionName?: string;
     userComments?: string;
 }
 
@@ -117,7 +118,7 @@ export const useDatabase = () => {
 };
 
 export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const { viewMode, databasePath } = useSettings();
+    const { viewMode, databasePath, isLoaded } = useSettings();
     const [db, setDb] = useState<AntigravityDatabase | null>(null);
     const [patients, setPatients] = useState<Patient[]>([]);
     const [studies, setStudies] = useState<Study[]>([]);
@@ -148,19 +149,32 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                         sort: [{ [sortKey]: sortConfig.direction }]
                     }).$.subscribe(async (docs) => {
                         console.log(`DatabaseProvider: Received ${docs.length} patients from T_Patient`);
-                        const allModalities = new Set<string>();
 
-                        const mappedPatients = await Promise.all(docs.map(async (doc) => {
-                            const studies = await database.T_Study.find({
-                                selector: { patientId: doc.id },
-                                sort: [{ studyDate: 'desc' }]
-                            }).exec();
+                        // Bulk fetch all studies for these patients to avoid N+1 queries
+                        const patientIds = docs.map(d => d.id);
+                        const allStudies = await database.T_Study.find({
+                            selector: { patientId: { $in: patientIds } }
+                        }).exec();
 
+                        // Group studies by patient for efficient lookup
+                        const studyMap = new Map<string, any[]>();
+                        allStudies.forEach(s => {
+                            if (!studyMap.has(s.patientId)) studyMap.set(s.patientId, []);
+                            studyMap.get(s.patientId)!.push(s);
+                        });
+
+                        const globalModalities = new Set<string>();
+
+                        const mappedPatients = docs.map((doc) => {
+                            const studies = studyMap.get(doc.id) || [];
                             const studyCount = studies.length;
                             const ptModalities = Array.from(new Set(studies.flatMap((s: any) => s.modalitiesInStudy || []))).filter(Boolean) as string[];
-                            ptModalities.forEach(m => allModalities.add(m));
+                            ptModalities.forEach(m => globalModalities.add(m));
 
                             const totalImageCount = studies.reduce((acc, s: any) => acc + (s.numberOfStudyRelatedInstances || 0), 0);
+
+                            // Sort studies by date to get the latest one
+                            const sortedStudies = [...studies].sort((a, b) => (b.studyDate || '').localeCompare(a.studyDate || ''));
 
                             return {
                                 id: doc.id,
@@ -171,12 +185,13 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                                 studyCount,
                                 totalImageCount,
                                 modalities: ptModalities,
-                                studyDate: studies[0]?.studyDate || '', // Store latest study date for filtering
-                                userComments: studies[0]?.userComments || ''
+                                studyDate: sortedStudies[0]?.studyDate || '',
+                                institutionName: doc.institutionName || '',
+                                userComments: sortedStudies[0]?.userComments || ''
                             };
-                        }));
-                        setPatients(mappedPatients.filter(p => p.totalImageCount > 0));
-                        setAvailableModalities(Array.from(allModalities).sort());
+                        });
+                        setPatients(mappedPatients);
+                        setAvailableModalities(Array.from(globalModalities).sort());
                     });
                 } else {
                     // STUDY LIST MODE: Subscribe to T_Study directly
@@ -185,18 +200,24 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                         sort: [{ [sortKey]: sortConfig.direction }]
                     }).$.subscribe(async (docs) => {
                         console.log(`DatabaseProvider: Received ${docs.length} studies from T_Study`);
-                        const allModalities = new Set<string>();
+
+                        // Bulk fetch patients to avoid N+1 queries
+                        const patientIds = Array.from(new Set(docs.map(d => d.patientId)));
+                        const patientDocs = await database.T_Patient.find({
+                            selector: { id: { $in: patientIds } }
+                        }).exec();
+                        const patientMap = new Map(patientDocs.map(p => [p.id, p]));
 
                         const mappedStudiesAsPatients = docs.map(doc => {
+                            const patientDoc = patientMap.get(doc.patientId);
                             const mods = doc.modalitiesInStudy || [];
-                            mods.forEach(m => allModalities.add(m));
 
                             return {
                                 id: doc.studyInstanceUID,
                                 patientID: doc.patientId,
-                                patientName: '',
-                                patientBirthDate: doc.studyDate,
-                                patientSex: '',
+                                patientName: patientDoc?.patientName || '',
+                                patientBirthDate: patientDoc?.patientBirthDate || doc.studyDate || '',
+                                patientSex: patientDoc?.patientSex || '',
                                 studyCount: 1,
                                 totalImageCount: doc.numberOfStudyRelatedInstances || 0,
                                 modalities: mods,
@@ -204,29 +225,13 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                                 studyDescription: doc.studyDescription,
                                 accessionNumber: doc.accessionNumber,
                                 studyDate: doc.studyDate,
+                                institutionName: doc.institutionName || patientDoc?.institutionName || '',
                                 userComments: doc.userComments || ''
                             };
                         });
 
-                        const fullList = await Promise.all(mappedStudiesAsPatients.map(async (item) => {
-                            try {
-                                const patientDoc = await database.T_Patient.findOne(item.patientID).exec();
-                                if (patientDoc) {
-                                    return {
-                                        ...item,
-                                        patientName: patientDoc.patientName,
-                                        patientID: patientDoc.patientID,
-                                        patientBirthDate: patientDoc.patientBirthDate,
-                                        patientSex: patientDoc.patientSex
-                                    };
-                                }
-                            } catch (e) { /* ignore */ }
-                            return item;
-                        }));
-
-                        // @ts-ignore
-                        setPatients(fullList.filter(p => p.totalImageCount > 0));
-                        setAvailableModalities(Array.from(allModalities).sort());
+                        setPatients(mappedStudiesAsPatients);
+                        setAvailableModalities([]);
                     });
                 }
 
@@ -241,32 +246,46 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     // Auto-reimport logic after database reset
     useEffect(() => {
+        let isActive = true;
         const checkAutoReimport = async () => {
-            const shouldReimport = localStorage.getItem('horos_reimport_after_reset') === 'true';
-            if (shouldReimport && db && databasePath) {
-                console.log('DatabaseProvider: Auto-reimporting from:', databasePath);
-                localStorage.removeItem('peregrine_reimport_after_reset');
+            const shouldReimport = localStorage.getItem('peregrine_reimport_after_reset') === 'true';
+            if (!shouldReimport || !db || !databasePath || !isLoaded) return;
 
-                try {
-                    setImportProgress({ current: 0, total: 100, percent: 0, message: 'Scanning for files...' });
-                    // @ts-ignore
-                    const allFiles = await window.electron.readdirRecursive(databasePath);
-                    const dcmFiles = allFiles.filter((f: string) => f.toLowerCase().endsWith('.dcm'));
+            // Wait a small bit for UI to be ready
+            await new Promise(resolve => setTimeout(resolve, 500));
+            if (!isActive) return;
 
-                    if (dcmFiles.length > 0) {
-                        await importFiles(db, dcmFiles, false, (percent, message) => {
-                            setImportProgress({ current: 0, total: 100, percent, message });
-                        }, databasePath);
-                    }
-                } catch (err) {
-                    console.error('Auto-reimport failed:', err);
-                } finally {
-                    setImportProgress(null);
+            console.log('DatabaseProvider: Auto-reimporting from:', databasePath);
+            // Remove the flag NOW so we don't loop if a reload happens during import
+            localStorage.removeItem('peregrine_reimport_after_reset');
+
+            try {
+                setImportProgress({ current: 0, total: 100, percent: 0, message: 'Scanning for files...' });
+
+                // @ts-ignore
+                const allFiles = await window.electron.readdirRecursive(databasePath);
+                // Filter out hidden files
+                const filesToImport = allFiles.filter((f: string) => {
+                    const name = f.split(/[/\\]/).pop() || '';
+                    return !name.startsWith('.');
+                });
+
+                console.log(`DatabaseProvider: Found ${filesToImport.length} files to re-import`);
+
+                if (filesToImport.length > 0) {
+                    await importFiles(db, filesToImport, false, (percent, message) => {
+                        if (isActive) setImportProgress({ current: 0, total: 100, percent, message });
+                    }, databasePath);
                 }
+            } catch (err) {
+                console.error('Auto-reimport failed:', err);
+            } finally {
+                if (isActive) setImportProgress(null);
             }
         };
         checkAutoReimport();
-    }, [db, databasePath]);// Re-run when viewMode changes
+        return () => { isActive = false; };
+    }, [db, databasePath, isLoaded]);
 
     // Filtered patients based on search criteria (A6)
     const filteredPatients = React.useMemo(() => {
@@ -623,12 +642,20 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                         onClick={async () => {
                             if (window.confirm('CAUTION: This will permanently delete all local database records and reset the application. DICOM files in your managed folder will NOT be deleted. They will be automatically re-imported after the reset. Proceed?')) {
                                 try {
-                                    localStorage.setItem('horos_reimport_after_reset', 'true');
+                                    localStorage.setItem('peregrine_reimport_after_reset', 'true');
+                                    // Clear state first to stop any background observers
+                                    setDb(null);
+                                    setPatients([]);
+                                    setStudies([]);
+
                                     await removeDatabase();
-                                    window.location.reload();
+                                    setTimeout(() => {
+                                        window.location.reload();
+                                    }, 500);
                                 } catch (e) {
-                                    alert('Failed to reset database: ' + e);
-                                    localStorage.removeItem('horos_reimport_after_reset');
+                                    console.error('Reset failed:', e);
+                                    alert('Failed to reset database: ' + e + '\n\nPlease try restarting the application if this persists.');
+                                    localStorage.removeItem('peregrine_reimport_after_reset');
                                 }
                             }
                         }}

@@ -20,14 +20,14 @@ import {
     ProbeTool,
     ArrowAnnotateTool,
     BidirectionalTool,
-    CobbAngleTool,
-    StackScrollMouseWheelTool
+
 } from '@cornerstonejs/tools';
 import { useDatabase } from '../Database/DatabaseProvider';
+import { useSettings } from '../Settings/SettingsContext';
 import { OverlayManager } from './OverlayManager';
 import { prefetchMetadata } from './electronLoader';
 import { CLUT_PRESETS } from './CLUTPresets';
-import { addViewportToSync, removeViewportFromSync } from './SyncManager';
+import { addViewportToSync, removeViewportFromSync, triggerInitialSync } from './SyncManager';
 import { startCine, stopCine } from './CinePlayer';
 import { type ToolMode } from './Toolbar';
 import { VerticalPagingSlider } from './VerticalPagingSlider';
@@ -68,8 +68,10 @@ export const Viewport = ({
 }: Props) => {
     const elementRef = useRef<HTMLDivElement>(null);
     const { db } = useDatabase();
+    const { databasePath } = useSettings();
     const [status, setStatus] = useState<string>('');
     const [metadata, setMetadata] = useState<any>({});
+    const [isReady, setIsReady] = useState(false);
 
     // 1. Initialize Tools & Loader
     useEffect(() => {
@@ -145,6 +147,7 @@ export const Viewport = ({
 
     // 3. Handle CLUT Changes
     useEffect(() => {
+        if (!isReady) return;
         const engine = getRenderingEngine(renderingEngineId);
         if (!engine) return;
 
@@ -161,25 +164,33 @@ export const Viewport = ({
             });
             viewport.render();
         }
-    }, [activeCLUT, viewportId, renderingEngineId]);
+    }, [activeCLUT, viewportId, renderingEngineId, isReady]);
 
-    // 4. Handle Sync
     useEffect(() => {
-        if (isSynced && !isThumbnail) {
-            addViewportToSync(viewportId, renderingEngineId);
-        } else {
+        if (!isReady || isThumbnail) return;
+
+        addViewportToSync(viewportId, renderingEngineId);
+        return () => {
             removeViewportFromSync(viewportId, renderingEngineId);
-        }
-    }, [isSynced, viewportId, renderingEngineId, isThumbnail]);
+        };
+    }, [viewportId, renderingEngineId, isThumbnail, isReady]);
 
-    // 5. Handle Cine
+    // 4.5 Propagate Sync Toggle to element attribute
     useEffect(() => {
-        if (isCinePlaying && !isThumbnail) {
+        if (elementRef.current) {
+            elementRef.current.setAttribute('data-sync-enabled', isSynced.toString());
+        }
+    }, [isSynced]);
+
+    useEffect(() => {
+        if (!isReady || isThumbnail) return;
+
+        if (isCinePlaying) {
             startCine(viewportId, renderingEngineId);
         } else {
             stopCine(viewportId);
         }
-    }, [isCinePlaying, viewportId, renderingEngineId, isThumbnail]);
+    }, [isCinePlaying, viewportId, renderingEngineId, isThumbnail, isReady]);
 
     // 6. Load Images
     useEffect(() => {
@@ -189,16 +200,19 @@ export const Viewport = ({
 
         const loadSeries = async () => {
             if (!elementRef.current) return;
+            setIsReady(false);
             setStatus('Loading Series...');
 
             let ids: string[] = [];
             let images: any[] = [];
 
             if (isThumbnail && initialImageId) {
-                // OPTIMIZATION: For thumbnails, do NOT load the whole series.
-                // Just load the single representative image passed in.
-                console.log(`Viewport [${viewportId}]: Thumbnail mode. Loading single image: ${initialImageId}`);
-                ids.push(`electronfile:${initialImageId}`);
+                let fullPath = initialImageId;
+                if (fullPath && !(fullPath.startsWith('/') || /^[a-zA-Z]:/.test(fullPath)) && databasePath) {
+                    const sep = databasePath.includes('\\') ? '\\' : '/';
+                    fullPath = `${databasePath.replace(/[\\/]$/, '')}${sep}${fullPath.replace(/^[\\/]/, '')}`;
+                }
+                ids.push(`electronfile:${fullPath}`);
             } else {
                 // Normal Viewer Mode: Load entire series
                 images = await db.T_FilePath.find({
@@ -206,25 +220,27 @@ export const Viewport = ({
                     sort: [{ instanceNumber: 'asc' }]
                 }).exec();
 
-                console.log(`Viewport [${viewportId}]: Found ${images.length} images for series ${seriesUid}`);
-
                 if (images.length === 0) {
                     setStatus('No images.');
                     return;
                 }
 
                 images.forEach((img: any) => {
+                    let fullPath = img.filePath;
+                    if (fullPath && !(fullPath.startsWith('/') || /^[a-zA-Z]:/.test(fullPath)) && databasePath) {
+                        const sep = databasePath.includes('\\') ? '\\' : '/';
+                        fullPath = `${databasePath.replace(/[\\/]$/, '')}${sep}${fullPath.replace(/^[\\/]/, '')}`;
+                    }
+
                     if (img.numberOfFrames > 1) {
                         for (let i = 0; i < img.numberOfFrames; i++) {
-                            ids.push(`electronfile:${img.filePath}?frame=${i}`);
+                            ids.push(`electronfile:${fullPath}?frame=${i}`);
                         }
                     } else {
-                        ids.push(`electronfile:${img.filePath}`);
+                        ids.push(`electronfile:${fullPath}`);
                     }
                 });
             }
-
-            console.log(`Viewport [${viewportId}]: Loading stack with ${ids.length} IDs. First ID: ${ids[0]}`);
 
             let renderingEngine = getRenderingEngine(renderingEngineId);
             if (!renderingEngine) {
@@ -234,6 +250,8 @@ export const Viewport = ({
             // Pre-fetch metadata for technical rendering parameters (pixel representation, transcale, etc.)
             await prefetchMetadata(ids);
 
+            if (!elementRef.current) return;
+
             const viewportInput: Types.PublicViewportInput = {
                 viewportId,
                 type: ViewportType.STACK,
@@ -242,6 +260,7 @@ export const Viewport = ({
             };
 
             renderingEngine.enableElement(viewportInput);
+            setIsReady(true);
             const viewport = renderingEngine.getViewport(viewportId) as Types.IStackViewport;
 
             if (!isThumbnail) {
@@ -263,13 +282,18 @@ export const Viewport = ({
                 }
 
                 await viewport.setStack(ids, initialIndex);
-                console.log(`Viewport [${viewportId}]: setStack complete`);
+
+                // Immediate synchronization on load
+                if (!isThumbnail) {
+                    try {
+                        triggerInitialSync(renderingEngineId, viewportId);
+                    } catch (syncErr) {
+                        console.warn('Initial synchronization failed:', syncErr);
+                    }
+                }
 
                 // Apply initial WW/WL from DICOM header (stored in database)
-                // Apply initial WW/WL from DICOM header (stored in database)
                 // Prioritize the actual loaded image's metadata for VOI (Window/Level)
-                // This ensures we use the values corrected by electronLoader (Theoretical Range, cleaned strings)
-                // rather than potentially stale/malformed database values.
                 const currentId = ids[initialIndex];
                 const cachedImage = cache.getImage(currentId);
 
@@ -286,7 +310,6 @@ export const Viewport = ({
                                 upper: wc + ww / 2,
                             }
                         });
-                        console.log(`Viewport [${viewportId}]: Applied VOI from Image: WC=${wc}, WW=${ww}`);
                     }
                 } else if (images[initialIndex]) {
                     // Fallback to database if image in cache doesn't have WW/WL
@@ -308,7 +331,6 @@ export const Viewport = ({
                                 upper: wc + ww / 2,
                             }
                         });
-                        console.log(`Viewport [${viewportId}]: Applied VOI from Database: WC=${wc}, WW=${ww}`);
                     }
                 }
 
@@ -371,10 +393,10 @@ export const Viewport = ({
                 engine.disableElement(viewportId);
             }
         };
-    }, [db, seriesUid, viewportId, renderingEngineId, isThumbnail]);
+    }, [db, seriesUid, viewportId, renderingEngineId, isThumbnail, databasePath]);
 
     useEffect(() => {
-        if (isThumbnail) return;
+        if (!isReady || isThumbnail) return;
 
         const handleImageChange = (evt: any) => {
             if (evt.detail.viewportId !== viewportId) return;
@@ -398,7 +420,7 @@ export const Viewport = ({
             element?.removeEventListener(Enums.Events.STACK_NEW_IMAGE, handleImageChange);
             element?.removeEventListener(Enums.Events.VOI_MODIFIED, handleImageChange);
         };
-    }, [viewportId, renderingEngineId, isThumbnail]);
+    }, [viewportId, renderingEngineId, isThumbnail, isReady]);
 
     const handleSliceChange = (sliceIndex: number) => {
         const engine = getRenderingEngine(renderingEngineId);

@@ -37,6 +37,10 @@ const AppContent = () => {
         { id: 'vp-5', seriesUid: null },
         { id: 'vp-6', seriesUid: null },
         { id: 'vp-7', seriesUid: null },
+        { id: 'vp-8', seriesUid: null },
+        { id: 'vp-9', seriesUid: null },
+        { id: 'vp-10', seriesUid: null },
+        { id: 'vp-11', seriesUid: null },
     ]);
 
     const [activeTool, setActiveTool] = useState<ToolMode>('WindowLevel');
@@ -44,7 +48,7 @@ const AppContent = () => {
     const [slabThickness, setSlabThickness] = useState(1);
     const [isCinePlaying, setIsCinePlaying] = useState(false);
     const [activeCLUT, setActiveCLUT] = useState<string>('grayscale');
-    const [isSynced, setIsSynced] = useState(false);
+    const [isSynced, setIsSynced] = useState(true);
 
     // Phase D: 3D Visualization States
     const [isClipping, setIsClipping] = useState(false);
@@ -379,7 +383,7 @@ const AppContent = () => {
                                     studyUid={selectedStudyUid}
                                     selectedSeriesUid={viewports[activeViewportIndex].seriesUid}
                                     onSelect={onSeriesSelect}
-                                    defaultCols={1}
+                                    fixedCols={1}
                                 />
                             )}
                         </div>
