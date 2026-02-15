@@ -1,5 +1,5 @@
 import { SynchronizerManager } from '@cornerstonejs/tools';
-import { Enums } from '@cornerstonejs/core';
+import { Enums, metaData as csMetaData } from '@cornerstonejs/core';
 
 export const SYNC_GROUP_ID = 'stack-sync-group';
 export const VOI_SYNC_GROUP_ID = 'voi-sync-group';
@@ -13,16 +13,45 @@ export const createSynchronizers = () => {
             Enums.Events.STACK_NEW_IMAGE,
             (
                 _synchronizerInstance: any,
-                _sourceViewport: any,
+                sourceViewport: any,
                 targetViewport: any,
-                sourceImageIndex: number,
+                _sourceImageIndex: number,
                 _targetImageIndex: number
             ) => {
-                if (targetViewport && typeof targetViewport.setImageIdIndex === 'function') {
-                    // Only sync if indices are different to avoid infinite loops (though CS3D handles this)
-                    if (targetViewport.getCurrentImageIdIndex() !== sourceImageIndex) {
-                        targetViewport.setImageIdIndex(sourceImageIndex);
+                if (!sourceViewport || !targetViewport) return;
+
+                // 1. Get Master (Source) IPP
+                const sourceImageId = sourceViewport.getCurrentImageId();
+                if (!sourceImageId) return;
+
+                const sourceMeta = csMetaData.get('imagePlaneModule', sourceImageId);
+                if (!sourceMeta || !sourceMeta.imagePositionPatient) return;
+
+                const sourceZ = sourceMeta.imagePositionPatient[2];
+
+                // 2. Nearest Neighbor Search in Target
+                const targetImageIds = targetViewport.getImageIds();
+                let closestImageId = null;
+                let minDistance = Infinity;
+
+                // Optimization: If we have many images, this could be slow, but for standard stacks it's fine.
+                // In the future, we can cache IPP centers for viewports.
+                for (const imageId of targetImageIds) {
+                    const targetMeta = csMetaData.get('imagePlaneModule', imageId);
+                    if (targetMeta && targetMeta.imagePositionPatient) {
+                        const targetZ = targetMeta.imagePositionPatient[2];
+                        const distance = Math.abs(sourceZ - targetZ);
+                        if (distance < minDistance) {
+                            minDistance = distance;
+                            closestImageId = imageId;
+                        }
                     }
+                }
+
+                // 3. Apply to Target
+                if (closestImageId && closestImageId !== targetViewport.getCurrentImageId()) {
+                    targetViewport.setImageId(closestImageId);
+                    targetViewport.render();
                 }
             }
         );

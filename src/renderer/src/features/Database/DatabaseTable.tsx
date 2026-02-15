@@ -396,10 +396,14 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                             <span key={m} className={`px-1 rounded text-[8px] font-bold ${selectedPatientId === patient.id ? 'bg-white/20 text-white' : 'bg-blue-50 text-peregrine-accent border border-peregrine-accent/10'}`}>{m}</span>
                                         ))
                                     ) : (
-                                        <span className={`px-1 rounded text-[8px] font-bold ${selectedPatientId === patient.id ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'}`}>PAT</span>
+                                        patient.modalities?.map((m: string) => (
+                                            <span key={m} className={`px-1 rounded text-[8px] font-bold ${selectedPatientId === patient.id ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500 hover:bg-peregrine-accent/10 transition-colors'}`}>{m}</span>
+                                        ))
                                     )}
                                 </div>
-                                <div className={`text-right font-mono text-[10px] px-2 ${selectedPatientId === patient.id ? 'text-white/90' : 'text-gray-400'}`}>{patient._isStudy ? '-' : patient.studyCount}</div>
+                                <div className={`text-right font-mono text-[10px] px-2 ${selectedPatientId === patient.id ? 'text-white/90' : 'text-gray-400'}`}>
+                                    {patient.totalImageCount || 0}
+                                </div>
                                 <div className={`px-2 ${selectedPatientId === patient.id ? 'text-white/80' : 'text-gray-400'}`}>-</div>
                                 <div className="px-2 flex items-center">
                                     <input
@@ -458,12 +462,6 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                 expandedPatients.has(patient.id) && (
                                     patient._isStudy ? (
                                         // Study Mode: Render Series directly
-                                        // We reuse seriesMap if populated by togglePatient (which needs update)
-                                        // But wait, togglePatient populates studiesMap by default.
-                                        // We need to handle this below. Assuming togglePatient logic will be updated to populate studiesMap even if it's series for study?
-                                        // Or we update togglePatient.
-                                        // Actually, let's look at what we have available.
-                                        // We need to fetch series.
                                         (studiesMap[patient.id] || []).map((series: any) => (
                                             <div
                                                 key={series.seriesInstanceUID}
@@ -474,10 +472,10 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                         (window as any).electron.openViewer(series.seriesInstanceUID);
                                                     }
                                                 }}
-                                                className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1fr_1.2fr_32px] px-4 py-0.5 cursor-default text-[10px] items-center border-l-[3px] ml-6 group/series transition-all ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-peregrine-accent text-white border-blue-600' : 'hover:bg-gray-100 text-gray-600 border-transparent'}`}
+                                                className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1fr_1.2fr_32px] px-4 py-0.5 cursor-default text-[10px] items-center border-l-[3px] group/series transition-all ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-peregrine-accent text-white border-blue-600' : 'hover:bg-gray-100 text-gray-600 border-transparent'}`}
                                             >
                                                 <div
-                                                    className="flex items-center gap-1.5 pl-4 truncate cursor-text"
+                                                    className="flex items-center gap-1.5 pl-8 truncate cursor-text"
                                                     onMouseEnter={() => setHoveredCell({ type: 'seriesDescription', value: series.seriesDescription || '' })}
                                                     onMouseLeave={() => setHoveredCell(null)}
                                                 >
@@ -491,7 +489,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                 <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
                                                 <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/70' : 'text-gray-400'}>{series.seriesDate || '-'}</div>
                                                 <div
-                                                    className={`truncate cursor-text ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/80' : 'text-gray-500'}`}
+                                                    className={`truncate px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/80' : 'text-gray-500'}`}
                                                     onMouseEnter={() => series.seriesDescription && setHoveredCell({ type: 'seriesDescription', value: series.seriesDescription })}
                                                     onMouseLeave={() => setHoveredCell(null)}
                                                 >
@@ -500,7 +498,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                 <div className="flex">
                                                     <span className={`px-1 rounded text-[8px] font-black ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-white/20 text-white' : 'bg-gray-50 text-gray-400 border border-gray-100 uppercase'}`}>{series.modality}</span>
                                                 </div>
-                                                <div className={`text-right font-mono font-bold ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white' : 'text-[#ff3b30]'}`}>
+                                                <div className={`text-right font-mono font-bold px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white' : 'text-[#ff3b30]'}`}>
                                                     {series.imageCount || 0}
                                                 </div>
                                                 <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
@@ -521,27 +519,27 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                             <React.Fragment key={study.studyInstanceUID}>
                                                 <div
                                                     onClick={(e) => { e.stopPropagation(); toggleStudy(study.studyInstanceUID); }}
-                                                    className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1fr_1.2fr_32px] px-4 py-1 cursor-default text-[10.5px] items-center border-l-[3px] ml-4 group/study ${selectedStudyUid === study.studyInstanceUID ? 'bg-[#d0e0ff] border-peregrine-accent' : 'hover:bg-gray-100/50 border-transparent'}`}
+                                                    className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1fr_1.2fr_32px] px-4 py-1 cursor-default text-[10.5px] items-center border-l-[3px] group/study ${selectedStudyUid === study.studyInstanceUID ? 'bg-[#d0e0ff] border-peregrine-accent' : 'hover:bg-gray-100/50 border-transparent'}`}
                                                 >
-                                                    <div className="flex items-center gap-1.5 pl-2 text-gray-800 font-semibold truncate">
+                                                    <div className="flex items-center gap-1.5 pl-4 text-gray-800 font-semibold truncate">
                                                         <div className="w-4 flex items-center justify-center text-gray-400">
                                                             {expandedStudies.has(study.studyInstanceUID) ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
                                                         </div>
                                                         <Calendar size={12} className="text-[#ff9500]/80" />
                                                         {study.studyDescription || 'Untitled Study'}
                                                     </div>
-                                                    <div className="text-gray-500 font-mono text-[9px] truncate">-</div>
-                                                    <div className="text-gray-500 text-[9px] tabular-nums">-</div>
-                                                    <div className="text-gray-400">-</div>
-                                                    <div className="text-gray-600 font-medium tabular-nums">{study.studyDate}</div>
-                                                    <div className="text-gray-700 truncate font-bold">{study.studyDescription}</div>
-                                                    <div className="flex gap-1">
+                                                    <div className="text-gray-500 font-mono text-[9px] truncate px-2">-</div>
+                                                    <div className="text-gray-500 text-[9px] tabular-nums px-2">-</div>
+                                                    <div className="text-gray-400 px-2">-</div>
+                                                    <div className="text-gray-600 font-medium tabular-nums px-2">{study.studyDate}</div>
+                                                    <div className="text-gray-700 truncate font-bold px-2">{study.studyDescription}</div>
+                                                    <div className="flex gap-1 px-2">
                                                         {study.modalitiesInStudy?.map((m: string) => (
                                                             <span key={m} className="px-1 py-0.5 rounded bg-blue-50 text-peregrine-accent text-[8px] font-black border border-peregrine-accent/10">{m}</span>
                                                         ))}
                                                     </div>
-                                                    <div className="text-right text-gray-600 font-mono text-[9px] font-bold">{study.totalImageCount || '-'}</div>
-                                                    <div className="text-gray-500 truncate text-[10px]">{study.institutionName || '-'}</div>
+                                                    <div className="text-right text-gray-600 font-mono text-[9px] font-bold px-2">{study.numberOfStudyRelatedInstances || '-'}</div>
+                                                    <div className="text-gray-500 truncate text-[10px] px-2">{study.institutionName || '-'}</div>
                                                     <div className="px-2 flex items-center">
                                                         <input
                                                             type="text"
@@ -588,25 +586,25 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                                 (window as any).electron.openViewer(series.seriesInstanceUID);
                                                             }
                                                         }}
-                                                        className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1fr_1.2fr_32px] px-4 py-0.5 cursor-default text-[10px] items-center border-l-[3px] ml-10 group/series transition-all ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-peregrine-accent text-white border-blue-600' : 'hover:bg-gray-100 text-gray-600 border-transparent'}`}
+                                                        className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1fr_1.2fr_32px] px-4 py-0.5 cursor-default text-[10px] items-center border-l-[3px] group/series transition-all ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-peregrine-accent text-white border-blue-600' : 'hover:bg-gray-100 text-gray-600 border-transparent'}`}
                                                     >
-                                                        <div className="flex items-center gap-1.5 pl-4 truncate">
+                                                        <div className="flex items-center gap-1.5 pl-12 truncate">
                                                             <Activity size={10} className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'} />
                                                             <span className="font-medium">{series.seriesDescription || `Series ${series.seriesNumber}`}</span>
                                                         </div>
-                                                        <div className={`font-mono text-[9px] ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}`}>S:{series.seriesNumber}</div>
-                                                        <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
-                                                        <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
-                                                        <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/70' : 'text-gray-400'}>{series.seriesDate || '-'}</div>
-                                                        <div className={`truncate ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/80' : 'text-gray-500'}`}>{series.seriesDescription}</div>
-                                                        <div className="flex">
+                                                        <div className={`font-mono text-[9px] ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'} px-2`}>S:{series.seriesNumber}</div>
+                                                        <div className={`px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}`}>-</div>
+                                                        <div className={`px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}`}>-</div>
+                                                        <div className={`px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/70' : 'text-gray-400'}`}>{series.seriesDate || '-'}</div>
+                                                        <div className={`truncate px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/80' : 'text-gray-500'}`}>{series.seriesDescription}</div>
+                                                        <div className="flex px-2">
                                                             <span className={`px-1 rounded text-[8px] font-black ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-white/20 text-white' : 'bg-gray-50 text-gray-400 border border-gray-100 uppercase'}`}>{series.modality}</span>
                                                         </div>
-                                                        <div className={`text-right font-mono font-bold ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white' : 'text-[#ff3b30]'}`}>
+                                                        <div className={`text-right font-mono font-bold px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white' : 'text-[#ff3b30]'}`}>
                                                             {series.imageCount || 0}
                                                         </div>
-                                                        <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
-                                                        <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
+                                                        <div className={`px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}`}>-</div>
+                                                        <div className={`px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}`}>-</div>
                                                         <div className="flex justify-end opacity-40 group-hover/series:opacity-100 transition-opacity">
                                                             <button
                                                                 onClick={(e) => handleDeleteSeries(e, series.seriesInstanceUID, series.seriesDescription || 'Untitled Series')}
@@ -682,7 +680,8 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                             </button>
                         </div>
                     </div>
-                )}
-        </div>
+                )
+            }
+        </div >
     );
 };

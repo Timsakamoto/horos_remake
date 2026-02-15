@@ -19,6 +19,7 @@ interface Patient {
     patientBirthDate: string;
     patientSex: string;
     studyCount: number;
+    totalImageCount: number;
     modalities: string[];
     // Extended fields for Study Mode
     _isStudy?: boolean;
@@ -159,6 +160,8 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                             const ptModalities = Array.from(new Set(studies.flatMap((s: any) => s.modalitiesInStudy || []))).filter(Boolean) as string[];
                             ptModalities.forEach(m => allModalities.add(m));
 
+                            const totalImageCount = studies.reduce((acc, s: any) => acc + (s.numberOfStudyRelatedInstances || 0), 0);
+
                             return {
                                 id: doc.id,
                                 patientID: doc.patientID,
@@ -166,12 +169,13 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                                 patientBirthDate: doc.patientBirthDate || '',
                                 patientSex: doc.patientSex || '',
                                 studyCount,
+                                totalImageCount,
                                 modalities: ptModalities,
                                 studyDate: studies[0]?.studyDate || '', // Store latest study date for filtering
                                 userComments: studies[0]?.userComments || ''
                             };
                         }));
-                        setPatients(mappedPatients);
+                        setPatients(mappedPatients.filter(p => p.totalImageCount > 0));
                         setAvailableModalities(Array.from(allModalities).sort());
                     });
                 } else {
@@ -194,6 +198,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                                 patientBirthDate: doc.studyDate,
                                 patientSex: '',
                                 studyCount: 1,
+                                totalImageCount: doc.numberOfStudyRelatedInstances || 0,
                                 modalities: mods,
                                 _isStudy: true,
                                 studyDescription: doc.studyDescription,
@@ -220,7 +225,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                         }));
 
                         // @ts-ignore
-                        setPatients(fullList);
+                        setPatients(fullList.filter(p => p.totalImageCount > 0));
                         setAvailableModalities(Array.from(allModalities).sort());
                     });
                 }
@@ -484,13 +489,8 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
                         console.log(`[DELETE] Attempting to unlink: ${targetPath} (Original: ${img.filePath})`);
                         // @ts-ignore
-                        const result = await window.electron.unlink(targetPath);
-                        if (result === true) {
-                            deletedFilesCount++;
-                        } else {
-                            console.error(`[DELETE] Failed to unlink (ipc returned false): ${img.filePath}`);
-                            failedFilesCount++;
-                        }
+                        await window.electron.unlink(targetPath);
+                        deletedFilesCount++;
                     } catch (e) {
                         console.error('[DELETE] Exception during unlink:', img.filePath, e);
                         failedFilesCount++;
