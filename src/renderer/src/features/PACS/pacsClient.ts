@@ -1,33 +1,12 @@
 import { api } from 'dicomweb-client';
+import { PACSNode, PACSStudy as SharedPACSStudy } from '../../../../shared/pacsTypes';
 
-export interface PACSServer {
+export interface PACSServer extends PACSNode {
     id: string;
-    name: string;
-    aeTitle: string;
-    address?: string; // IP or Hostname for DIMSE
-    port?: number;    // Port for DIMSE
-    url?: string;     // URL for DICOMweb
-    isDicomWeb: boolean;
-    wadoUri?: string; // Optional WADO-URI base
-    wadoRs?: string;  // Optional WADO-RS base
-    qidoRs?: string;  // Optional QIDO-RS base
-    stowRs?: string;  // Optional STOW-RS base
+    // Extended properties for internal client use if any
 }
 
-export interface PACSStudy {
-    id: string;
-    patientName: string;
-    patientId: string;
-    patientBirthDate: string;
-    studyDate: string;
-    modality: string;
-    description: string;
-    numInstances: number;
-    studyInstanceUID: string;
-    accessionNumber?: string;
-    studyTime?: string;
-    sourceAeTitle?: string;
-}
+export type PACSStudy = SharedPACSStudy;
 
 // using global Window.electron type from electron.d.ts
 
@@ -115,6 +94,14 @@ export class PACSClient {
     async retrieveStudy(studyInstanceUID: string, destinationAet: string = 'PEREGRINE'): Promise<boolean> {
         if (this.server.isDicomWeb) {
             // Retrieve is handled by importStudyFromPACS for DICOMweb in this project
+            // We need to trigger it here or in the provider.
+            // Since this method runs in provider usually, we can delegate or return strict true
+            // But better to implement it if we have access to db.
+            // Actually, PACSProvider calls this. PACSProvider has access to DB.
+            // The cleanest way is to return true here and let PACSProvider handle the WADO-RS download logic if it detects DICOMweb?
+            // OR we import importStudyFromPACS here.
+            // Let's throwing an error that it should be handled by the caller (Provider) which has DB access.
+            // Or better: The Provider should call importStudyFromPACS directly for DICOMweb.
             return true;
         } else {
             const node = {
@@ -206,13 +193,8 @@ export class PACSClient {
     }
 
     private mapDimseStudy(s: any): PACSStudy {
-        // s is a dcmjs-dimse Element/Dataset object, assumed simplified to Record<tag, value>
-        // But implementation in DICOMService.ts returns `dataset.getElements()`
-        // dcmjs elements are stored by Tag (group+element string) or Keyword?
-        // dcmjs `dataset.getElements()` returns object keyed by keyword if nameMap used, or tag if not?
-        // Let's assume tags for robustness or check both.
-
-        // Actually DICOMService.ts: dataset.getElements() -> Record<string, Element>
+        // s is a dcmjs-dimse Element/Dataset object
+        // DICOMService.ts returns `dataset.getElements()` -> Record<string, Element>
         // Element: { vr: string, Value: any[] }
 
         const getValue = (tag: string): string => {

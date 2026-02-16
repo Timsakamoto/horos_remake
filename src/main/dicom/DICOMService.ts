@@ -4,14 +4,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { parseStringPromise } from 'xml2js';
 import { JobManager } from './JobManager';
+import { APP_CONSTANTS } from '../../config/constants';
 
 
 
-interface PACSNode {
-    aeTitle: string;
-    address: string;
-    port: number;
-}
+import { PACSNode } from '../../shared/pacsTypes';
 
 export enum LogLevel {
     DEBUG = 0,
@@ -30,8 +27,19 @@ export class DICOMService {
     private autoRestartEnabled: boolean = true;
     private restartCount: number = 0;
     private lastRestartTime: number = 0;
-    private currentPort: number = 11112; // Default
-    private currentAeTitle: string = 'PEREGRINE';
+    private currentPort: number = APP_CONSTANTS.DEFAULT_PORT; // Default
+    private currentAeTitle: string = APP_CONSTANTS.DEFAULT_AE_TITLE;
+
+    // TLS State
+    private useTls: boolean = false;
+    private certPath: string = '';
+    private keyPath: string = '';
+    // @ts-ignore
+    private caPath: string = '';
+
+    private fileWatcher: fs.FSWatcher | null = null;
+    private processedFiles: Set<string> = new Set();
+
 
     constructor() {
         this.setupIpc();
@@ -154,10 +162,15 @@ export class DICOMService {
             return jobManager.getJobs();
         });
 
-        ipcMain.handle('pacs:startListener', async (_, aet: string, port: number) => {
+        ipcMain.handle('pacs:startListener', async (_, aet: string, port: number, useTls?: boolean, certPath?: string, keyPath?: string, caPath?: string) => {
             // Reset restart count on manual start
             this.restartCount = 0;
             this.autoRestartEnabled = true;
+            this.useTls = useTls || false;
+            this.certPath = certPath || '';
+            this.keyPath = keyPath || '';
+            this.caPath = caPath || '';
+
             return this.startListener(aet, port);
         });
 
@@ -195,6 +208,7 @@ export class DICOMService {
     }
 
     async echo(node: PACSNode): Promise<boolean> {
+        if (!node.address || !node.port) return false;
         this.logInfo(`C-ECHO Initiation to ${node.aeTitle}@${node.address}:${node.port}`);
 
         const binPath = this.getDcmtkBinPath('echoscu');
@@ -202,10 +216,24 @@ export class DICOMService {
 
         const args = ['-v', '-aet', this.currentAeTitle, '-aec', node.aeTitle, node.address, node.port.toString()];
 
-        return new Promise((resolve) => {
-            const process = spawn(binPath, args);
+        if (node.useTls) {
+            // Check if we have client certs to offer
+            if (this.certPath && this.keyPath) {
+                args.push('--enable-tls', this.keyPath, this.certPath);
+                if (this.caPath) args.push('--add-cert-file', this.caPath);
+            } else {
+                args.push('--anonymous-tls');
+            }
+        }
 
-            process.on('close', (code) => {
+        if (this.logLevel === LogLevel.DEBUG) {
+            args.push('-d');
+        }
+
+        return new Promise((resolve) => {
+            const process = spawn(binPath, args) as ChildProcess;
+
+            process.on('close', (code: number | null) => {
                 if (code === 0) {
                     this.logInfo(`C-ECHO Response: Success`);
                     resolve(true);
@@ -215,7 +243,7 @@ export class DICOMService {
                 }
             });
 
-            process.on('error', (err) => {
+            process.on('error', (err: Error) => {
                 this.logError(`C-ECHO Network Error: ${err.message}`, err);
                 resolve(false);
             });
@@ -223,6 +251,7 @@ export class DICOMService {
     }
 
     async search(node: PACSNode, level: string, query: any): Promise<any[]> {
+        if (!node.address || !node.port) return [];
         const binPath = this.getDcmtkBinPath('findscu');
         if (!binPath) return [];
 
@@ -233,8 +262,20 @@ export class DICOMService {
             '-P', // Patient Root Information Model
             '-k', `QueryRetrieveLevel=${level}`,
             node.address,
-            node.port.toString()
+            node.port.toString(),
+            '--max-pdu', '131072', // Horos/OsiriX optimization: 128KB PDU
+            '--acse-timeout', '30', // Standard timeout
+            '--dimse-timeout', '30'
         ];
+
+        if (node.useTls) {
+            if (this.certPath && this.keyPath) {
+                args.push('--enable-tls', this.keyPath, this.certPath);
+                if (this.caPath) args.push('--add-cert-file', this.caPath);
+            } else {
+                args.push('--anonymous-tls');
+            }
+        }
 
         // Add query keys
         for (const [key, value] of Object.entries(query)) {
@@ -258,17 +299,21 @@ export class DICOMService {
         // findscu -X outputs XML.
         args.push('-X');
 
+        if (this.logLevel === LogLevel.DEBUG) {
+            args.push('-d');
+        }
+
         this.logInfo(`C-FIND Initiation: ${binPath} ${args.join(' ')}`);
 
         return new Promise((resolve, reject) => {
-            const process = spawn(binPath, args);
+            const process = spawn(binPath, args) as ChildProcess;
             let stdout = '';
             let stderr = '';
 
-            process.stdout.on('data', (data) => stdout += data.toString());
-            process.stderr.on('data', (data) => stderr += data.toString());
+            process.stdout?.on('data', (data: any) => stdout += data.toString());
+            process.stderr?.on('data', (data: any) => stderr += data.toString());
 
-            process.on('close', async (code) => {
+            process.on('close', async (code: number | null) => {
                 if (code === 0) {
                     try {
                         const results = await this.parseDcmtkXml(stdout);
@@ -285,7 +330,7 @@ export class DICOMService {
                 }
             });
 
-            process.on('error', (err) => {
+            process.on('error', (err: Error) => {
                 this.logError(`C-FIND Error: ${err.message}`);
                 reject(err);
             });
@@ -293,6 +338,7 @@ export class DICOMService {
     }
 
     async move(node: PACSNode, destinationAet: string, level: string, keys: any, onProgress?: (p: number) => void): Promise<boolean> {
+        if (!node.address || !node.port) return false;
         const binPath = this.getDcmtkBinPath('movescu');
         if (!binPath) return false;
 
@@ -304,12 +350,28 @@ export class DICOMService {
             '-P', // Patient Root
             '-k', `QueryRetrieveLevel=${level}`,
             node.address,
-            node.port.toString()
+            node.port.toString(),
+            '--max-pdu', '131072', // Horos/OsiriX optimization: 128KB PDU
+            '--acse-timeout', '30', // Standard timeout
+            '--dimse-timeout', '30'
         ];
+
+        if (node.useTls) {
+            if (this.certPath && this.keyPath) {
+                args.push('--enable-tls', this.keyPath, this.certPath);
+                if (this.caPath) args.push('--add-cert-file', this.caPath);
+            } else {
+                args.push('--anonymous-tls');
+            }
+        }
 
         if (keys.StudyInstanceUID) args.push('-k', `StudyInstanceUID=${keys.StudyInstanceUID}`);
         if (keys.SeriesInstanceUID) args.push('-k', `SeriesInstanceUID=${keys.SeriesInstanceUID}`);
         if (keys.SOPInstanceUID) args.push('-k', `SOPInstanceUID=${keys.SOPInstanceUID}`);
+
+        if (this.logLevel === LogLevel.DEBUG) {
+            args.push('-d');
+        }
 
         this.logInfo(`C-MOVE Initiation: ${binPath} ${args.join(' ')}`);
 
@@ -317,9 +379,9 @@ export class DICOMService {
         // Response: Pending (Sub-Operations: Remaining: 5, Completed: 0, Failed: 0, Warning: 0)
 
         return new Promise((resolve, reject) => {
-            const process = spawn(binPath, args);
+            const process = spawn(binPath, args) as ChildProcess;
 
-            process.stdout.on('data', (data) => {
+            process.stdout?.on('data', (data: any) => {
                 const msg = data.toString();
                 // Basic progress parsing (Parsing standard movescu output)
                 if (msg.includes('Remaining:')) {
@@ -329,13 +391,13 @@ export class DICOMService {
                 }
             });
 
-            process.stderr.on('data', (data) => {
+            process.stderr?.on('data', (data: any) => {
                 const msg = data.toString();
                 if (msg.includes('E:')) this.logError(`movescu: ${msg}`);
                 else this.logInfo(`movescu: ${msg}`);
             });
 
-            process.on('close', (code) => {
+            process.on('close', (code: number | null) => {
                 if (code === 0) {
                     this.logInfo('C-MOVE Success');
                     resolve(true);
@@ -345,7 +407,7 @@ export class DICOMService {
                 }
             });
 
-            process.on('error', (err) => {
+            process.on('error', (err: Error) => {
                 this.logError(`C-MOVE Error: ${err.message}`);
                 reject(err);
             });
@@ -353,6 +415,7 @@ export class DICOMService {
     }
 
     async store(node: PACSNode, filePaths: string[], onProgress?: (p: number) => void): Promise<boolean> {
+        if (!node.address || !node.port) return false;
         const binPath = this.getDcmtkBinPath('storescu');
         if (!binPath) return false;
 
@@ -366,26 +429,39 @@ export class DICOMService {
             ...filePaths
         ];
 
+        if (node.useTls) {
+            if (this.certPath && this.keyPath) {
+                args.push('--enable-tls', this.keyPath, this.certPath);
+                if (this.caPath) args.push('--add-cert-file', this.caPath);
+            } else {
+                args.push('--anonymous-tls');
+            }
+        }
+
+        if (this.logLevel === LogLevel.DEBUG) {
+            args.push('-d');
+        }
+
         this.logInfo(`C-STORE Initiation to ${node.aeTitle} (${filePaths.length} files)`);
 
         return new Promise((resolve, reject) => {
-            const process = spawn(binPath, args);
+            const process = spawn(binPath, args) as ChildProcess;
             let totalFiles = filePaths.length;
             let currentFile = 0;
 
             // storescu outputs one line per file usually
-            process.stdout.on('data', () => {
+            process.stdout?.on('data', () => {
                 // Approximate progress based on output activity
                 currentFile++;
                 if (onProgress) onProgress(Math.round((currentFile / totalFiles) * 100));
             });
 
-            process.stderr.on('data', (data) => {
+            process.stderr?.on('data', (data: any) => {
                 const msg = data.toString();
                 if (msg.includes('E:')) this.logError(`storescu: ${msg}`);
             });
 
-            process.on('close', (code) => {
+            process.on('close', (code: number | null) => {
                 if (code === 0) {
                     this.logInfo('C-STORE Success');
                     resolve(true);
@@ -395,7 +471,7 @@ export class DICOMService {
                 }
             });
 
-            process.on('error', (err) => {
+            process.on('error', (err: Error) => {
                 this.logError(`C-STORE Error: ${err.message}`);
                 reject(err);
             });
@@ -476,15 +552,32 @@ export class DICOMService {
             const storagePath = process.env.DICOM_STORAGE_PATH || path.join(app.getPath('userData'), 'dicom_storage');
             if (!fs.existsSync(storagePath)) fs.mkdirSync(storagePath, { recursive: true });
 
+            // Start File Watcher
+            this.startFileWatcher(storagePath);
+
             // storescp arguments
             const args = [
                 '--aetitle', aeTitle,
                 '--output-directory', storagePath,
                 '--prefer-uncompr',
                 '--accept-all',
+                '--max-pdu', '131072', // Horos/OsiriX optimization: 128KB PDU
                 '-v', // verbose
                 port.toString()
             ];
+
+            if (this.useTls && this.certPath && this.keyPath) {
+                args.push('--enable-tls', this.keyPath, this.certPath);
+
+                if (this.caPath) {
+                    args.push('--add-cert-file', this.caPath);
+                    args.push('--require-peer-cert');
+                } else {
+                    args.push('--ignore-peer-cert');
+                }
+
+                this.logInfo(`TLS Enabled for Listener with cert: ${this.certPath}`);
+            }
 
             if (this.logLevel === LogLevel.DEBUG) {
                 args.push('-d');
@@ -534,6 +627,42 @@ export class DICOMService {
         }
     }
 
+    private startFileWatcher(dir: string) {
+        if (this.fileWatcher) return;
+
+        this.logInfo(`Starting file watcher on: ${dir}`);
+        try {
+            this.fileWatcher = fs.watch(dir, async (eventType, filename) => {
+                if (eventType === 'rename' && filename) {
+                    const filePath = path.join(dir, filename.toString());
+
+                    // Simple debounce/check if file exists and is not processed
+                    if (fs.existsSync(filePath) && !this.processedFiles.has(filePath)) {
+                        // Wait a bit for write to finish
+                        await new Promise(r => setTimeout(r, 500));
+
+                        // Check again
+                        if (fs.existsSync(filePath)) {
+                            // dedupe
+                            this.processedFiles.add(filePath);
+
+                            // Cleanup set after a while to prevent memory leak
+                            setTimeout(() => this.processedFiles.delete(filePath), 60000);
+
+                            this.logInfo(`File detected: ${filename}`);
+                            JobManager.getInstance().emit('storageProgress', {
+                                filePath: filePath,
+                                fileName: filename
+                            });
+                        }
+                    }
+                }
+            });
+        } catch (e) {
+            this.logError('Failed to start file watcher', e);
+        }
+    }
+
     private handleServerCrash() {
         if (!this.autoRestartEnabled) return;
 
@@ -562,6 +691,12 @@ export class DICOMService {
     async stopListener(disableAutoRestart: boolean = true) {
         if (disableAutoRestart) {
             this.autoRestartEnabled = false;
+        }
+
+        if (this.fileWatcher) {
+            this.logInfo('Stopping file watcher...');
+            this.fileWatcher.close();
+            this.fileWatcher = null;
         }
 
         return new Promise<void>((resolve) => {

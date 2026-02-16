@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
+import { APP_CONSTANTS } from '../../../../config/constants';
 import { PACSClient, PACSServer, PACSStudy } from './pacsClient';
 import { useDatabase } from '../Database/DatabaseProvider';
 import { importMetadata } from '../Database/importService';
@@ -8,6 +9,9 @@ interface LocalListenerSettings {
     aeTitle: string;
     port: number;
     isRunning: boolean;
+    useTls?: boolean;
+    certPath?: string;
+    keyPath?: string;
 }
 
 export interface PACSJob {
@@ -85,7 +89,7 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
 
     const [localListener, setLocalListenerState] = useState<LocalListenerSettings>(() => {
         const stored = localStorage.getItem(STORAGE_KEY_LISTENER);
-        return stored ? JSON.parse(stored) : { aeTitle: 'PEREGRINE', port: 11112, isRunning: false };
+        return stored ? JSON.parse(stored) : { aeTitle: APP_CONSTANTS.DEFAULT_AE_TITLE, port: APP_CONSTANTS.DEFAULT_PORT, isRunning: false };
     });
 
     const [results, setResults] = useState<PACSStudy[]>([]);
@@ -220,7 +224,13 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
                 setLocalListenerState(prev => ({ ...prev, isRunning: false }));
             }
         } else {
-            const success = await window.electron.pacs.startListener(localListener.aeTitle, localListener.port);
+            const success = await window.electron.pacs.startListener(
+                localListener.aeTitle,
+                localListener.port,
+                localListener.useTls,
+                localListener.certPath,
+                localListener.keyPath
+            );
             if (success) {
                 setLocalListenerState(prev => ({ ...prev, isRunning: true }));
             } else {
@@ -254,6 +264,41 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
     const retrieve = async (studyInstanceUID: string): Promise<boolean> => {
         if (!activeServer) return false;
 
+        // Optimistic update
+        const jobId = crypto.randomUUID();
+        setActiveJobs(prev => [{
+            id: jobId,
+            type: 'C-MOVE',
+            status: 'active',
+            description: `Retrieving Study ${studyInstanceUID}`,
+            progress: 0,
+            details: 'Requesting...',
+            nodeName: activeServer.name || 'Unknown Node',
+            timestamp: Date.now()
+        }, ...prev]);
+
+        if (activeServer.isDicomWeb) {
+            // DICOMweb: Direct import
+            try {
+                // Dynamic import to avoid circular dependency if any
+                const { importStudyFromPACS } = await import('../Database/importService');
+
+                if (db) {
+                    await importStudyFromPACS(db, activeServer, studyInstanceUID, (msg) => {
+                        console.log('DICOMweb Import:', msg);
+                    });
+                    // Mark job complete
+                    setActiveJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'completed', progress: 100, details: 'Imported from DICOMweb' } : j));
+                    return true;
+                }
+                return false;
+            } catch (e) {
+                console.error("DICOMweb Retrieve failed", e);
+                setActiveJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'failed', details: 'Import Failed' } : j));
+                return false;
+            }
+        }
+
         try {
             const client = new PACSClient(activeServer);
             const destinationAet = localListener.aeTitle;
@@ -261,6 +306,7 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
             return await client.retrieveStudy(studyInstanceUID, destinationAet);
         } catch (err: any) {
             setError(err.message || 'Retrieve Failed');
+            setActiveJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'failed', details: 'Retrieve Failed' } : j));
             return false;
         }
     };
