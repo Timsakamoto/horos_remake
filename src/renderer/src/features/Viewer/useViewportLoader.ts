@@ -309,6 +309,7 @@ export const useViewportLoader = ({
                         modality: subseries?.modality || '',
                         windowWidth: ww ?? prev.windowWidth,
                         windowCenter: wc ?? prev.windowCenter,
+                        frameOfReferenceUID: metaData.get('imagePlaneModule', ids[initialIndex])?.frameOfReferenceUID,
                     }));
                 }
 

@@ -56,6 +56,13 @@ export const CornerstoneManager = () => {
                                 renderOutline: true,
                                 isVisible: true,
                             });
+                            // Set color for reference lines
+                            toolGroup.setToolConfiguration(ReferenceLinesTool.toolName, {
+                                configuration: {
+                                    fontFamily: 'Inter',
+                                    renderOutline: true,
+                                }
+                            });
                         } else {
                             toolGroup.addTool(toolClass.toolName);
                         }
@@ -71,6 +78,29 @@ export const CornerstoneManager = () => {
 
             console.log('[CornerstoneManager] System Ready');
             setIsInitReady(true);
+
+            // Nuclear Debug Helper
+            (window as any).debugReferenceLines = () => {
+                const tg = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
+                const viewports = tg?.getViewportIds();
+                console.log('--- Reference Lines Diagnostic ---');
+                console.log('ToolGroup:', TOOL_GROUP_ID);
+                console.log('Active Tool:', tg?.getActivePrimaryMouseButtonTool());
+                console.log('Registered Viewports:', viewports);
+                console.log('RefLines Tool State:', tg?.getToolOptions(ReferenceLinesTool.toolName));
+
+                viewports?.forEach(vpId => {
+                    const vp = getRenderingEngine(RENDERING_ENGINE_ID)?.getViewport(vpId);
+                    const sliceId = (vp as any).getCurrentImageId?.();
+                    const metadata = metaData.get('imagePlaneModule', sliceId);
+                    console.log(`Viewport ${vpId}:`, {
+                        type: vp?.type,
+                        imageId: sliceId,
+                        FOR: metadata?.frameOfReferenceUID,
+                        Pos: metadata?.imagePositionPatient
+                    });
+                });
+            };
         };
 
         prepare();
