@@ -15,6 +15,7 @@ export type ToolMode =
     | 'Text'
     | 'Crosshairs'
     | 'ReferenceLines'
+    | 'None'
     | 'StackScroll';
 export type ToolbarMode = 'DATABASE' | 'VIEWER';
 export type ProjectionMode = 'NORMAL' | 'MIP' | 'MINIP';

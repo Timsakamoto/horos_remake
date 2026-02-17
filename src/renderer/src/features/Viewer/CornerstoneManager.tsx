@@ -71,7 +71,7 @@ export const CornerstoneManager = () => {
 
                 // Default orientations and global tools
                 // Default orientations and global tools - NO PRIMARY MOUSE ASSIGNMENTS
-                toolGroup.setToolEnabled(ReferenceLinesTool.toolName);
+                toolGroup.setToolActive(ReferenceLinesTool.toolName);
             }
 
             console.log('[CornerstoneManager] System Ready');

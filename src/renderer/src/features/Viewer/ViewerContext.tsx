@@ -24,6 +24,7 @@ import {
     BidirectionalTool,
     MagnifyTool,
     CrosshairsTool,
+    ReferenceLinesTool,
 } from '@cornerstonejs/tools';
 
 import {
@@ -81,7 +82,7 @@ interface ViewerProviderProps {
 
 export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initialView = 'Database', initialSeriesUid }) => {
     const [activeView, setActiveView] = useState<ViewMode>(initialView);
-    const [activeTool, setActiveTool] = useState<ToolMode>('Pan');
+    const [activeTool, setActiveTool] = useState<ToolMode>('StackScroll');
     const [activeViewportIndex, setActiveViewportIndex] = useState(0);
     const [layout, setLayout] = useState<Layout>({ rows: 1, cols: 1 });
     const [projectionMode, setProjectionMode] = useState<ProjectionMode>('NORMAL');
@@ -239,13 +240,15 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
             'Crosshairs': CrosshairsTool.toolName,
             'StackScroll': 'StackScroll',
             'CobbAngle': 'CobbAngle',
-            'Text': 'TextAnnotate'
+            'Text': 'TextAnnotate',
+            'ReferenceLines': ReferenceLinesTool.toolName,
+            'None': 'None'
         };
 
         const csToolName = toolMap[activeTool];
         // Reference Lines removed as per user request (performance)
 
-        if (csToolName && toolGroup.hasTool(csToolName)) {
+        if (csToolName && csToolName !== 'None' && toolGroup.hasTool(csToolName)) {
             toolGroup.setToolActive(csToolName, {
                 bindings: [{ mouseButton: csToolsEnums.MouseBindings.Primary }]
             });
