@@ -60,7 +60,7 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
         }
 
         const fetchSeries = async () => {
-            console.log(`ThumbnailStrip: Starting fetchSeries. patientId="${patientId}", studyUid="${studyUid}"`);
+            console.log(`[ThumbnailStrip] Fetching for patientId: ${patientId}, studyUid: ${studyUid}, databasePath: ${databasePath}`);
 
             // 1. Fetch relevant studies
             let studies: any[] = [];
@@ -101,12 +101,23 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                 const count = s.numberOfSeriesRelatedInstances || 0;
                 const middleIndex = Math.floor(count / 2);
 
-                const firstImageResults = await db.T_FilePath.find({
+                let firstImageResults = await db.T_FilePath.find({
                     selector: { seriesInstanceUID: s.seriesInstanceUID },
                     sort: [{ instanceNumber: 'asc' }],
                     limit: 1,
                     skip: middleIndex > 0 ? middleIndex : 0
                 }).exec();
+
+                // Fallback for safety
+                if (firstImageResults.length === 0 && middleIndex > 0) {
+                    console.warn(`[ThumbnailStrip] Middle image fetch empty for ${s.seriesInstanceUID}, falling back to first.`);
+                    firstImageResults = await db.T_FilePath.find({
+                        selector: { seriesInstanceUID: s.seriesInstanceUID },
+                        sort: [{ instanceNumber: 'asc' }],
+                        limit: 1
+                    }).exec();
+                }
+
                 const firstImage = firstImageResults[0];
 
                 const parentStudy = studies.find(sd => sd.studyInstanceUID === s.studyInstanceUID);
@@ -133,6 +144,12 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                         wc = c;
                         ww = w;
                     }
+                }
+
+                if (thumbPath) {
+                    console.log(`[ThumbnailStrip] Resolved thumb for ${s.seriesInstanceUID}: ${thumbPath}`);
+                } else {
+                    console.warn(`[ThumbnailStrip] No image found for series ${s.seriesInstanceUID}`);
                 }
 
                 return {

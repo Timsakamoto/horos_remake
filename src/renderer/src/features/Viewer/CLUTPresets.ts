@@ -6,7 +6,6 @@ export interface CLUTPreset {
 }
 
 export const CLUT_PRESETS: CLUTPreset[] = [
-    { name: 'Default', windowWidth: 400, windowCenter: 40 },
     { name: 'Abdomen', windowWidth: 350, windowCenter: 40 },
     { name: 'Bone', windowWidth: 2000, windowCenter: 300 },
     { name: 'Brain', windowWidth: 80, windowCenter: 40 },

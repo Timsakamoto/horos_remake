@@ -102,8 +102,8 @@ function electronMetadataProvider(type: string, ...queries: any[]) {
             highBit: 31,
             samplesPerPixel: 1,
             photometricInterpretation: 'MONOCHROME2',
-            rows: mod.rows || 512,
-            columns: mod.columns || 512,
+            rows: mod.rows,
+            columns: mod.columns,
             rescaleIntercept: 0,
             rescaleSlope: 1,
         };
@@ -123,8 +123,8 @@ function electronMetadataProvider(type: string, ...queries: any[]) {
     if (type === 'generalSeriesModule') {
         const mod = metadata.generalSeriesModule || {};
         return {
-            modality: mod.modality || 'CT',
-            seriesNumber: mod.seriesNumber || 1,
+            modality: mod.modality,
+            seriesNumber: mod.seriesNumber,
             seriesInstanceUID: mod.seriesInstanceUID || '',
         };
     }
@@ -153,19 +153,14 @@ const loadLimiter = new ConcurrencyLimiter();
 
 // Global counter for debugging
 let totalLoadedImages = 0;
-// ★ FORCE Consistency: Capture the first FoR and use it for the entire series
-let moduleFrameOfReferenceUID: string | null = null;
-let moduleImageOrientationPatient: number[] | null = null;
-let modulePixelSpacing: number[] | null = null;
 
 export async function prefetchMetadata(imageIds: string[]) {
     console.log(`Loader: prefetchMetadata requested for ${imageIds.length} images`);
-    // Reset Master trackers for new load batch (assuming single series load)
-    if (imageIds.length > 1) {
-        moduleFrameOfReferenceUID = null;
-        moduleImageOrientationPatient = null;
-        modulePixelSpacing = null;
-    }
+
+    // ★ FORCE Consistency trackers (Scoped to this call to avoid concurrent race)
+    let moduleFrameOfReferenceUID: string | null = null;
+    let moduleImageOrientationPatient: number[] | null = null;
+    let modulePixelSpacing: number[] | null = null;
 
     const CHUNK_SIZE = 10; // Increase chunk size for better spacing detection
     let calculatedGeometrySpacing: number | null = null;
@@ -184,8 +179,8 @@ export async function prefetchMetadata(imageIds: string[]) {
                 // If this image was loaded in 2D first, it might be 16-bit.
                 // We MUST upgrade it to 32-bit float if it's a modality we patch,
                 // otherwise Cornerstone will reject it from the 3D volume.
-                const modality = m.originalAttributes?.modality || 'CT';
-                const canPatch = ['CT', 'MR', 'PT', 'NM'].includes(modality);
+                const modality = m.originalAttributes?.modality;
+                const canPatch = modality && ['CT', 'MR', 'PT', 'NM'].includes(modality);
 
                 if (canPatch && m.imagePixelModule.bitsAllocated !== 32) {
                     m.imagePixelModule.bitsAllocated = 32;
@@ -239,7 +234,7 @@ export async function prefetchMetadata(imageIds: string[]) {
                 const dataSet = dicomParser.parseDicom(uint8Array, { untilTag: 'x7fe00010' });
 
                 const getMultiNumber = (tag: string) => (dataSet.string(tag) || '').split(/\\+/).map(s => parseFloat(s)).filter(n => !isNaN(n));
-                const getSingleNumber = (tag: string, def: number) => {
+                const getSingleNumber = (tag: string, def?: number): number | undefined => {
                     const val = dataSet.string(tag);
                     if (!val) return def;
                     const n = parseFloat(val.split(/\\+/)[0]);
@@ -248,12 +243,12 @@ export async function prefetchMetadata(imageIds: string[]) {
 
                 const intercept = getSingleNumber('x00281052', 0);
                 const slope = getSingleNumber('x00281053', 1);
-                const rows = dataSet.uint16('x00280010') || 512;
-                const columns = dataSet.uint16('x00280011') || 512;
+                const rows = dataSet.uint16('x00280010');
+                const columns = dataSet.uint16('x00280011');
 
                 // --- ★ UNIVERSAL 32-BIT CHECK (Consistency FIX) ---
-                const modality = dataSet.string('x00080060') || 'CT';
-                const canPatch = ['CT', 'MR', 'PT', 'NM'].includes(modality);
+                const modality = dataSet.string('x00080060');
+                const canPatch = modality && ['CT', 'MR', 'PT', 'NM'].includes(modality);
                 // We ALWAYS treat these as 32-bit floats to prevent 2D/3D cache poisoning!
                 const willPatch = !dataSet.string('x00280004')?.includes('RGB') && (canPatch || intercept !== 0 || slope !== 1);
 
@@ -283,7 +278,6 @@ export async function prefetchMetadata(imageIds: string[]) {
                 let orient = getMultiNumber('x00200037');
                 if (orient.length !== 6) orient = [1, 0, 0, 0, 1, 0];
                 let spacing = getMultiNumber('x00280030');
-                if (spacing.length !== 2) spacing = [1, 1];
 
                 // ★ FORCE EVERYTHING Consistency
                 let currentFoR = dataSet.string('x00200052') || '1.2.3';
@@ -324,8 +318,8 @@ export async function prefetchMetadata(imageIds: string[]) {
                         frameOfReferenceUID: currentFoR,
                     },
                     voiLutModule: {
-                        windowCenter: getSingleNumber('x00281050', 40),
-                        windowWidth: getSingleNumber('x00281051', 400),
+                        windowCenter: getSingleNumber('x00281050'),
+                        windowWidth: getSingleNumber('x00281051'),
                     },
                     modalityLutModule: {
                         rescaleIntercept: willPatch ? 0 : intercept,
@@ -373,7 +367,7 @@ export async function prefetchMetadata(imageIds: string[]) {
 }
 
 export function loadElectronImage(imageId: string) {
-    console.log(`Loader: loadElectronImage triggered for ${imageId}`);
+    console.log(`[Loader] loadElectronImage: ${imageId}`);
     return {
         promise: (async () => {
             // ...
@@ -584,7 +578,7 @@ export function loadElectronImage(imageId: string) {
                 if (float32Data[i] > dataMax) dataMax = float32Data[i];
             }
 
-            console.log(`[HANDSHAKE] Loader: Returning 32-bit data for ${imageId}. Size=${float32Data.byteLength}, Type=${float32Data.constructor.name}, Range=[${dataMin}, ${dataMax}]`);
+            console.log(`[HANDSHAKE] ${imageId}: Returning ${float32Data.length} pixels, Min=${dataMin}, Max=${dataMax}, Window=${meta.voiLutModule.windowWidth}/${meta.voiLutModule.windowCenter}`);
             return result;
         })()
     };

@@ -22,11 +22,12 @@ interface OverlayProps {
         kvp?: string;
         ma?: string;
     };
+    isActive?: boolean;
 }
 
-export const OverlayManager: React.FC<OverlayProps> = ({ metadata }) => {
+export const OverlayManager: React.FC<OverlayProps> = ({ metadata, isActive = false }) => {
     return (
-        <div className="absolute inset-0 pointer-events-none select-none text-[11px] font-medium text-white/90 font-mono shadow-sm">
+        <div className={`absolute inset-0 pointer-events-none select-none text-[11px] font-medium font-mono shadow-sm transition-colors duration-300 ${isActive ? 'text-white/95' : 'text-white/70'}`}>
             {/* Top Left: Patient / Study Info */}
             <div className="absolute top-4 left-4 flex flex-col gap-0.5">
                 <div className="text-peregrine-accent font-black tracking-wider uppercase text-[12px]">{metadata.patientName || 'Anonymous'}</div>
@@ -53,7 +54,10 @@ export const OverlayManager: React.FC<OverlayProps> = ({ metadata }) => {
                 {metadata.pixelSpacing && Array.isArray(metadata.pixelSpacing) && metadata.pixelSpacing.length >= 2 && (
                     <div>Spacing: {Number(metadata.pixelSpacing[0] || 0).toFixed(2)} / {Number(metadata.pixelSpacing[1] || 0).toFixed(2)} mm</div>
                 )}
-                <div className="mt-1">WW: {Math.round(Number(metadata.windowWidth) || 0)} / WC: {Math.round(Number(metadata.windowCenter) || 0)}</div>
+                <div className="mt-1">
+                    WW: {metadata.windowWidth !== undefined ? Math.round(metadata.windowWidth) : '---'} /
+                    WC: {metadata.windowCenter !== undefined ? Math.round(metadata.windowCenter) : '---'}
+                </div>
             </div>
 
             {/* Bottom Right: Instance Info */}

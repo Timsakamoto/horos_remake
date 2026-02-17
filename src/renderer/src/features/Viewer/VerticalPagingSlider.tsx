@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 
 interface Props {
     min: number;
@@ -8,66 +8,94 @@ interface Props {
 }
 
 export const VerticalPagingSlider = ({ min, max, value, onChange }: Props) => {
+    const trackRef = useRef<HTMLDivElement>(null);
+    const [isDragging, setIsDragging] = useState(false);
+
     // Prevent rendering if there's only one slice or invalid range
     if (max <= min) return null;
 
-    const percentage = ((value - min) / (max - min)) * 100;
+    // Ensure value is within bounds (prevents handle jumping outside during transitions)
+    const clampedValue = Math.max(min, Math.min(max, value));
+    const percentage = ((clampedValue - min) / (max - min)) * 100;
 
-    const handleTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
-        const rect = e.currentTarget.getBoundingClientRect();
+    const handlePointerMove = (e: PointerEvent) => {
+        if (!isDragging || !trackRef.current) return;
+        const rect = trackRef.current.getBoundingClientRect();
         const y = e.clientY - rect.top;
         const ratio = Math.max(0, Math.min(1, y / rect.height));
-        // Inverse ratio because we want top to be min and bottom to be max (or vice versa)
-        // Actually, for vertical sliders in viewers, top is usually first slice (min) and bottom is last slice (max)
+
+        // Linear mapping: Top (ratio=0) -> min, Bottom (ratio=1) -> max
+        const newValue = Math.round(min + ratio * (max - min));
+        if (newValue !== value) {
+            onChange(newValue);
+        }
+    };
+
+    const handlePointerUp = () => {
+        setIsDragging(false);
+    };
+
+    useEffect(() => {
+        if (isDragging) {
+            window.addEventListener('pointermove', handlePointerMove);
+            window.addEventListener('pointerup', handlePointerUp);
+        } else {
+            window.removeEventListener('pointermove', handlePointerMove);
+            window.removeEventListener('pointerup', handlePointerUp);
+        }
+        return () => {
+            window.removeEventListener('pointermove', handlePointerMove);
+            window.removeEventListener('pointerup', handlePointerUp);
+        };
+    }, [isDragging, value, min, max]);
+
+    const handleTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (!trackRef.current) return;
+        const rect = trackRef.current.getBoundingClientRect();
+        const y = e.clientY - rect.top;
+        const ratio = Math.max(0, Math.min(1, y / rect.height));
         const newValue = Math.round(min + ratio * (max - min));
         onChange(newValue);
     };
 
     return (
-        <div className="absolute right-2 top-1/2 -translate-y-1/2 h-3/4 w-6 flex flex-col items-center group z-30">
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 h-3/4 w-6 flex flex-col items-center group z-30 select-none">
             {/* Range Labels */}
-            <div className="text-[9px] font-black text-white/30 mb-2 uppercase tracking-tighter select-none">
+            <div className="text-[9px] font-black text-white/30 mb-2 uppercase tracking-tighter">
                 {min}
             </div>
 
             {/* Slider Track Container */}
             <div
+                ref={trackRef}
                 className="flex-1 w-1.5 bg-white/10 rounded-full relative cursor-pointer hover:bg-white/20 transition-colors"
-                onClick={handleTrackClick}
+                onPointerDown={(e) => {
+                    setIsDragging(true);
+                    handleTrackClick(e as any);
+                }}
             >
-                {/* Active Range (Optional, maybe just a path) */}
-                <div
-                    className="absolute top-0 left-0 right-0 bg-peregrine-accent/40 rounded-full"
-                    style={{ height: `${percentage}%` }}
-                />
-
                 {/* Handle */}
                 <div
-                    className="absolute left-1/2 -translate-x-1/2 w-4 h-4 bg-white rounded-full shadow-lg border-2 border-peregrine-accent flex items-center justify-center cursor-grab active:cursor-grabbing hover:scale-110 transition-transform"
+                    className="absolute left-1/2 -translate-x-1/2 w-4 h-4 bg-white rounded-full shadow-lg border-2 border-peregrine-accent flex items-center justify-center cursor-grab active:cursor-grabbing hover:scale-110 transition-transform z-10"
                     style={{ top: `${percentage}%`, marginTop: '-8px' }}
-                    draggable
-                    onDrag={(e) => {
-                        if (e.clientY === 0) return; // Ignore end of drag
-                        const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
-                        const y = e.clientY - rect.top;
-                        const ratio = Math.max(0, Math.min(1, y / rect.height));
-                        const newValue = Math.round(min + ratio * (max - min));
-                        if (newValue !== value) onChange(newValue);
-                    }}
                 >
                     <div className="w-1.5 h-1.5 bg-peregrine-accent rounded-full animate-pulse" />
                 </div>
             </div>
 
-            <div className="text-[9px] font-black text-white/30 mt-2 uppercase tracking-tighter select-none">
+            <div className="text-[9px] font-black text-white/30 mt-2 uppercase tracking-tighter">
                 {max}
             </div>
 
-            {/* Tooltip on Hover */}
-            <div className="absolute -left-12 opacity-0 group-hover:opacity-100 transition-opacity bg-black/80 text-white text-[10px] font-bold px-2 py-1 rounded border border-white/10 pointer-events-none whitespace-nowrap"
-                style={{ top: `${percentage}%`, transform: 'translateY(-50%)' }}>
-                Slice {value}
-            </div>
+            {/* Tooltip on Hover or Drag */}
+            {(isDragging || true) && (
+                <div
+                    className={`absolute -left-12 transition-opacity duration-200 bg-black/80 text-white text-[10px] font-bold px-2 py-1 rounded border border-white/10 pointer-events-none whitespace-nowrap ${isDragging ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                    style={{ top: `${percentage}%`, transform: 'translateY(-50%)' }}
+                >
+                    Slice {clampedValue}
+                </div>
+            )}
         </div>
     );
 };

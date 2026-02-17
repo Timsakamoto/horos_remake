@@ -28,21 +28,7 @@ import {
 import { CLUT_PRESETS } from './CLUTPresets';
 import { GridSelector } from './GridSelector';
 
-export type ViewMode = 'Database' | '2D' | 'MPR' | '3D' | 'PACS' | 'Axial' | 'Coronal' | 'Sagittal';
-export type ToolMode =
-    | 'WindowLevel'
-    | 'Pan'
-    | 'Zoom'
-    | 'Length'
-    | 'Probe'
-    | 'Rectangle'
-    | 'Ellipse'
-    | 'Angle'
-    | 'Arrow'
-    | 'Bidirectional'
-    | 'Magnify'
-    | 'Crosshairs'
-    | 'Text';
+import { ViewMode, ToolMode, ProjectionMode, ToolbarMode } from './types';
 
 export interface WWLPreset {
     name: string;
@@ -58,8 +44,7 @@ export const WWL_PRESETS: WWLPreset[] = [
     { name: 'Bone', windowWidth: 2000, windowCenter: 400 },
 ];
 
-export type ProjectionMode = 'NORMAL' | 'MIP' | 'MINIP';
-export type ToolbarMode = 'DATABASE' | 'VIEWER';
+// ProjectionMode and ToolbarMode are now imported from types.ts
 
 interface Props {
     mode: ToolbarMode;
