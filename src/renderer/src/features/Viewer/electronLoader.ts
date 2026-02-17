@@ -25,6 +25,11 @@ function normalizePath(p: string): string {
     return filePath;
 }
 
+const round = (val: number[] | number): any => {
+    if (Array.isArray(val)) return val.map(v => Math.round(v * 1000000) / 1000000);
+    return Math.round(val * 1000000) / 1000000;
+};
+
 function getCacheKey(imageId: string): string {
     if (!imageId) return '';
     let urlParts = imageId.split('?');
@@ -43,9 +48,17 @@ export function injectMetadata(imageId: string, metadata: any) {
     // Ensure vital stats are present
     const imagePlaneModule = {
         ...metadata.imagePlaneModule,
+        imagePositionPatient: round(metadata.imagePlaneModule?.imagePositionPatient || [0, 0, 0]),
+        imageOrientationPatient: round(metadata.imagePlaneModule?.imageOrientationPatient || [1, 0, 0, 0, 1, 0]),
         // Fallbacks
         sliceLocation: metadata.imagePlaneModule?.sliceLocation ?? metadata.imagePlaneModule?.imagePositionPatient?.[2] ?? 0,
     };
+
+    // Calculate cosines if missing
+    if (imagePlaneModule.imageOrientationPatient) {
+        imagePlaneModule.rowCosines = imagePlaneModule.imageOrientationPatient.slice(0, 3);
+        imagePlaneModule.columnCosines = imagePlaneModule.imageOrientationPatient.slice(3, 6);
+    }
 
     metadataCache.set(getCacheKey(imageId), {
         ...metadata,
@@ -88,10 +101,19 @@ function electronMetadataProvider(type: string, ...queries: any[]) {
     }
 
     if (type === 'imagePlaneModule') {
-        const pm = metadata.imagePlaneModule;
-        if (!imageId.includes('thumbnail')) {
-            console.log(`[MetadataDebug] imagePlaneModule request for ${imageId}: Pos=${pm.imagePositionPatient}, Orient=${pm.imageOrientationPatient}`);
+        const pm = { ...metadata.imagePlaneModule };
+
+        // Ensure robust structure for ReferenceLinesTool
+        if (pm.imageOrientationPatient && (!pm.rowCosines || !pm.columnCosines)) {
+            pm.rowCosines = pm.imageOrientationPatient.slice(0, 3);
+            pm.columnCosines = pm.imageOrientationPatient.slice(3, 6);
         }
+
+        if (pm.pixelSpacing && (!pm.rowPixelSpacing || !pm.columnPixelSpacing)) {
+            pm.rowPixelSpacing = pm.pixelSpacing[0];
+            pm.columnPixelSpacing = pm.pixelSpacing[1];
+        }
+
         return pm;
     }
 
@@ -319,15 +341,15 @@ export async function prefetchMetadata(imageIds: string[]) {
                     imagePixelModule,
                     imagePlaneModule: {
                         rows, columns,
-                        imagePositionPatient: pos,
-                        imageOrientationPatient: orient,
-                        rowCosines: orient.slice(0, 3),
-                        columnCosines: orient.slice(3, 6),
-                        pixelSpacing: spacing,
-                        rowPixelSpacing: spacing[0],
-                        columnPixelSpacing: spacing[1],
+                        imagePositionPatient: round(pos),
+                        imageOrientationPatient: round(orient),
+                        rowCosines: round(orient.slice(0, 3)),
+                        columnCosines: round(orient.slice(3, 6)),
+                        pixelSpacing: round(spacing),
+                        rowPixelSpacing: round(spacing[0]),
+                        columnPixelSpacing: round(spacing[1]),
                         sliceThickness: getSingleNumber('x00180088', getSingleNumber('x00180050', 1.0)),
-                        sliceLocation: pos[2],
+                        sliceLocation: round(pos[2]),
                         frameOfReferenceUID: currentFoR,
                     },
                     voiLutModule: {
