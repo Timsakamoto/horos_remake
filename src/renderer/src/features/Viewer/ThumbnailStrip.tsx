@@ -266,10 +266,11 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                                 </div>
                             )}
 
-                            {/* Label Overlay - Peregrine Style Glassmorphism */}
-                            <div className="absolute bottom-0 left-0 right-0 bg-black/70 backdrop-blur-md px-1.5 py-1.5 flex justify-between items-center z-10 border-t border-white/10">
+                            {/* Label Overlay - Minimalist Gradient for maximum visibility */}
+                            <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/80 via-black/20 to-transparent pointer-events-none" />
+                            <div className="absolute bottom-1 left-1.5 right-1.5 flex justify-between items-center z-10">
                                 <span className={`text-[${cols > 4 ? '7px' : '9px'}] font-black uppercase tracking-tighter ${selectedSeriesUid === series.seriesInstanceUID ? 'text-peregrine-accent' : 'text-white/90'}`}>{series.modality}</span>
-                                <span className={`text-[${cols > 4 ? '7px' : '9px'}] font-bold text-white/50`}>{series.numImages} Items</span>
+                                <span className={`text-[${cols > 4 ? '7px' : '9px'}] font-bold text-white/50`}>{series.numImages}</span>
                             </div>
                         </div>
 
