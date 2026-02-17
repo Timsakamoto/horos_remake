@@ -49,7 +49,6 @@ const AXIAL_VIEWPORT_ID = 'axial-viewport';
 const SAGITTAL_VIEWPORT_ID = 'sagittal-viewport';
 const CORONAL_VIEWPORT_ID = 'coronal-viewport';
 const ORTHO_TOOL_GROUP_ID = 'ortho-tool-group';
-const ORTHO_VOI_SYNC_ID = 'ortho-voi-sync';
 
 // Global Load Tracker to prevent double-loading during remounts
 const globalLoadTracker = new Map<string, {
@@ -135,16 +134,12 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
             const renderingEngine = getRenderingEngine(ORTHO_RENDERING_ENGINE_ID);
             if (renderingEngine) {
                 const tg = ToolGroupManager.getToolGroup(ORTHO_TOOL_GROUP_ID);
-                const sync = SynchronizerManager.getSynchronizer(ORTHO_VOI_SYNC_ID);
 
                 [AXIAL_VIEWPORT_ID, SAGITTAL_VIEWPORT_ID, CORONAL_VIEWPORT_ID].forEach(vpId => {
                     const vp = renderingEngine.getViewport(vpId);
                     if (!vp) return;
 
-                    // 1. Remove from Syncer
-                    try { if (sync) sync.remove({ viewportId: vpId, renderingEngineId: ORTHO_RENDERING_ENGINE_ID }); } catch (e) { }
-
-                    // 2. Remove from ToolGroup
+                    // 1. Remove from ToolGroup
                     try { if (tg) tg.removeViewports(ORTHO_RENDERING_ENGINE_ID, vpId); } catch (e) { }
 
                     // 3. Disable Element
@@ -378,6 +373,14 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
         engineRef.current = re;
 
         const setupViewports = async () => {
+            // ★ STRICT PRE-LOAD CHECK: Ensure volume exists in cache
+            const vol = cache.getVolume(volumeId);
+            if (!vol) {
+                console.error(`OrthoView: Volume ${volumeId} missing from cache despite load success. Retrying...`);
+                setIsVolumeLoaded(false);
+                return;
+            }
+
             const vps = [];
             const activeIds: string[] = [];
 
@@ -408,11 +411,7 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
                 if (!activeIds.includes(id)) {
                     const vp = re.getViewport(id);
                     if (vp) {
-                        // 1. Remove from Synchronizer
-                        const currentSync = SynchronizerManager.getSynchronizer(ORTHO_VOI_SYNC_ID);
-                        try { currentSync?.remove({ viewportId: id, renderingEngineId: ORTHO_RENDERING_ENGINE_ID }); } catch (e) { }
-
-                        // 2. Remove from ToolGroup
+                        // 1. Remove from ToolGroup
                         try { tg?.removeViewports(ORTHO_RENDERING_ENGINE_ID, id); } catch (e) { }
 
                         // 3. Disable Element
@@ -432,29 +431,8 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
                 console.log(`OrthoView: Enabled & Added Viewport: ${v.viewportId}`);
             });
 
-            const sync = SynchronizerManager.getSynchronizer(ORTHO_VOI_SYNC_ID) || SynchronizerManager.createSynchronizer(ORTHO_VOI_SYNC_ID, Enums.Events.VOI_MODIFIED, (_s, sV, tV) => {
-                if (!re) return;
-                const sViewport = re.getViewport(sV.viewportId) as Types.IVolumeViewport;
-                const tViewport = re.getViewport(tV.viewportId) as Types.IVolumeViewport;
-
-                // Add even more guards for the properties and viewport existence
-                if (!sViewport || !tViewport || typeof sViewport.getProperties !== 'function' || typeof tViewport.setProperties !== 'function') return;
-
-                try {
-                    const p = sViewport.getProperties();
-                    if (p && p.voiRange) {
-                        // Deep clone the range to avoid reference issues
-                        const safeRange = { lower: p.voiRange.lower, upper: p.voiRange.upper };
-                        tViewport.setProperties({ voiRange: safeRange });
-                        tViewport.render();
-                    }
-                } catch (err) {
-                    // Log internally but don't crash the event loop
-                }
-            });
-            activeIds.forEach(id => {
-                try { sync.add({ viewportId: id, renderingEngineId: ORTHO_RENDERING_ENGINE_ID }); } catch (e) { }
-            });
+            // Disable VOI sync for ortho views as requested
+            // (Removed SynchronizerManager.createSynchronizer logic here)
 
             await setVolumesForViewports(re, [{ volumeId }], activeIds);
 
@@ -480,9 +458,6 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
                 }
             });
 
-            // Optional: Manual Sync (as fallback for Crosshairs)
-            // We use the Synchronizer for VOI, but for position we have handleClickSync
-
             // Configure Crosshairs Tool
             if (tg && orientation === 'MPR') {
                 const crosshairsName = CrosshairsTool.toolName;
@@ -504,8 +479,6 @@ export const OrthoView = ({ seriesUid, activeTool, projectionMode = 'NORMAL', sl
                     });
                 }
             }
-
-            re.render();
         };
 
         setupViewports();

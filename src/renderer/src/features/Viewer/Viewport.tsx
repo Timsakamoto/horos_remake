@@ -58,9 +58,6 @@ interface Props {
 
 const TOOL_GROUP_ID = 'main-tool-group';
 
-// Global cache to persist WW/WL per series across viewport instances (e.g., during grid changes)
-const globalVoiCache = new Map<string, Types.VOIRange>();
-
 export const Viewport = ({
     viewportId,
     renderingEngineId,
@@ -85,10 +82,12 @@ export const Viewport = ({
     const elementRef = useRef<HTMLDivElement>(null);
     const { db } = useDatabase();
     const { databasePath } = useSettings();
+    const [isReady, setIsReady] = useState(false);
+    const [isComposed, setIsComposed] = useState(false);
+    const mountedRef = useRef(true);
     const [status, setStatus] = useState<string>('');
     const [metadata, setMetadata] = useState<any>({});
-    const [isReady, setIsReady] = useState(false);
-    const manualVoiRange = useRef<Types.VOIRange | null>(null);
+    const resizeObserverRef = useRef<ResizeObserver | null>(null);
 
     // 1. Initialize Tools & Loader
     useEffect(() => {
@@ -266,29 +265,30 @@ export const Viewport = ({
             viewport.setProperties({ voiRange });
             viewport.render();
 
-            // Sync to cache so it sticks
-            if (seriesUid) {
-                globalVoiCache.set(seriesUid, voiRange);
-                manualVoiRange.current = voiRange;
-
-                // Notify parent that the override has been "consumed" (applied)
-                onVoiChange?.();
-            }
+            // Notify parent that the override has been "consumed" (applied)
+            onVoiChange?.();
         }
     }, [voiOverride, isReady, isThumbnail, renderingEngineId, viewportId, seriesUid, onVoiChange]);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => { mountedRef.current = false; };
+    }, []);
 
     // 6. Load Images
     useEffect(() => {
         if (!db || !seriesUid) return;
 
-        let resizeObserver: ResizeObserver | null = null;
 
         const loadSeries = async () => {
             console.log(`Viewport ${viewportId}: loadSeries start`, seriesUid);
+            if (!mountedRef.current) return;
+            setIsComposed(false);
             if (!elementRef.current) return;
 
             // YIELD: Allow UI to update (remove drag overlay) before starting heavy load
-            await new Promise(resolve => setTimeout(resolve, 10));
+            // Increased delay to ensure DOM and layout are settled
+            await new Promise(resolve => setTimeout(resolve, 50));
 
             setIsReady(false);
             setStatus('Loading Series...');
@@ -337,12 +337,17 @@ export const Viewport = ({
                 renderingEngine = new RenderingEngine(renderingEngineId);
             }
 
+            // ★ CRITICAL FIX: Ensure previous registration is cleared (especially when returning from sectional views)
+            if (renderingEngine.getViewport(viewportId)) {
+                try { renderingEngine.disableElement(viewportId); } catch (e) { }
+            }
+
             // Pre-fetch metadata for technical rendering parameters (pixel representation, transcale, etc.)
             await prefetchMetadata(ids);
 
             if (!elementRef.current) return;
 
-            const isVolumeOrientation = !isThumbnail && (orientation === 'Coronal' || orientation === 'Sagittal');
+            const isVolumeOrientation = !isThumbnail && (orientation === 'Coronal' || orientation === 'Sagittal' || orientation === 'Axial');
 
             const viewportInput: Types.PublicViewportInput = {
                 viewportId,
@@ -352,6 +357,7 @@ export const Viewport = ({
             };
 
             renderingEngine.enableElement(viewportInput);
+            renderingEngine.resize(); // Force internal size update
             setIsReady(true);
 
             // Register tools for the specific viewport
@@ -386,6 +392,11 @@ export const Viewport = ({
                     await viewport.setStack(ids, initialIndex);
                 }
 
+                // For thumbnails, reveal immediately as they are simpler and don't need "Wait-for-Composition"
+                if (isThumbnail) {
+                    setIsComposed(true);
+                }
+
                 const viewport = renderingEngine.getViewport(viewportId) as Types.IStackViewport | Types.IVolumeViewport;
 
                 // Immediate synchronization on load
@@ -407,38 +418,20 @@ export const Viewport = ({
                 setTimeout(() => {
                     viewport.resetCamera();
 
-                    // Apply VOI: Priority Global Cache > Manual Adjustment (local) > Default
-                    const cachedVoi = seriesUid ? globalVoiCache.get(seriesUid) : null;
-                    if (cachedVoi) {
-                        viewport.setProperties({ voiRange: cachedVoi });
-                        manualVoiRange.current = cachedVoi;
-                    } else if (manualVoiRange.current) {
-                        viewport.setProperties({ voiRange: manualVoiRange.current });
-                    } else {
-                        const currentId = ids[initialIndex];
-                        const cachedImage = cache.getImage(currentId);
-                        if (cachedImage && 'windowCenter' in cachedImage && 'windowWidth' in cachedImage) {
-                            // @ts-ignore
-                            const wc = cachedImage.windowCenter;
-                            // @ts-ignore
-                            const ww = cachedImage.windowWidth;
-                            if (typeof wc === 'number' && typeof ww === 'number') {
-                                viewport.setProperties({ voiRange: { lower: wc - ww / 2, upper: wc + ww / 2 } });
-                            }
-                        } else if (isThumbnail && initialWindowCenter !== undefined && initialWindowWidth !== undefined) {
-                            viewport.setProperties({ voiRange: { lower: initialWindowCenter - initialWindowWidth / 2, upper: initialWindowCenter + initialWindowWidth / 2 } });
-                        } else if (images[initialIndex]) {
-                            const imgDoc = images[initialIndex] as any;
-                            const normalize = (val: any) => {
-                                if (Array.isArray(val)) return Number(val[0]);
-                                if (typeof val === 'string' && val.includes('\\')) return Number(val.split('\\')[0]);
-                                return Number(val);
-                            };
-                            const wc = normalize(imgDoc.windowCenter);
-                            const ww = normalize(imgDoc.windowWidth);
-                            if (!isNaN(wc) && !isNaN(ww)) {
-                                viewport.setProperties({ voiRange: { lower: wc - ww / 2, upper: wc + ww / 2 } });
-                            }
+                    // Apply VOI: Priority initialWindowWidth/Center (for thumbnail) > Default from image metadata
+                    if (isThumbnail && initialWindowCenter !== undefined && initialWindowWidth !== undefined) {
+                        viewport.setProperties({ voiRange: { lower: initialWindowCenter - initialWindowWidth / 2, upper: initialWindowCenter + initialWindowWidth / 2 } });
+                    } else if (images[initialIndex]) {
+                        const imgDoc = images[initialIndex] as any;
+                        const normalize = (val: any) => {
+                            if (Array.isArray(val)) return Number(val[0]);
+                            if (typeof val === 'string' && val.includes('\\')) return Number(val.split('\\')[0]);
+                            return Number(val);
+                        };
+                        const wc = normalize(imgDoc.windowCenter);
+                        const ww = normalize(imgDoc.windowWidth);
+                        if (!isNaN(wc) && !isNaN(ww)) {
+                            viewport.setProperties({ voiRange: { lower: wc - ww / 2, upper: wc + ww / 2 } });
                         }
                     }
 
@@ -499,7 +492,8 @@ export const Viewport = ({
                     }));
                 }
 
-                resizeObserver = new ResizeObserver(() => {
+                if (resizeObserverRef.current) resizeObserverRef.current.disconnect();
+                resizeObserverRef.current = new ResizeObserver(() => {
                     const engine = getRenderingEngine(renderingEngineId);
                     if (engine) {
                         engine.resize();
@@ -512,63 +506,48 @@ export const Viewport = ({
                         }
                     }
                 });
-                resizeObserver.observe(elementRef.current);
+                if (elementRef.current) resizeObserverRef.current.observe(elementRef.current);
+
+                if (elementRef.current) resizeObserverRef.current.observe(elementRef.current);
+
+                // Start reveal sequence via event
+                viewport.render();
+                console.log(`Viewport ${viewportId}: Initial render sequence triggered`);
 
             } catch (err) {
                 console.error('Load Error:', err);
                 setStatus('Load Failed');
-            } finally {
-                // Ensure status is cleared if we reached here without error but forgot to set it
-                // setStatus(''); // Wait, don't clear if it failed.
             }
         };
 
         loadSeries();
 
         return () => {
-            if (resizeObserver) resizeObserver.disconnect();
+            console.log(`Viewport ${viewportId}: cleanup loadSeries (disableElement & ResizeObserver)`);
+            if (resizeObserverRef.current) {
+                resizeObserverRef.current.disconnect();
+                resizeObserverRef.current = null;
+            }
             const engine = getRenderingEngine(renderingEngineId);
-            if (engine && engine.getViewport(viewportId)) {
-                engine.disableElement(viewportId);
+            if (engine) {
+                try { engine.disableElement(viewportId); } catch (e) { }
             }
         };
-    }, [db, seriesUid, viewportId, renderingEngineId, isThumbnail, databasePath]);
+    }, [db, seriesUid, viewportId, renderingEngineId, initialImageId, isThumbnail, databasePath, orientation]);
 
     useEffect(() => {
         if (!isReady || isThumbnail) return;
 
-        const enforceStickyVoi = () => {
-            if (!seriesUid) return;
-            const engine = getRenderingEngine(renderingEngineId);
-            const viewport = engine?.getViewport(viewportId) as Types.IStackViewport;
-            if (!viewport) return;
-
-            const targetVoi = manualVoiRange.current || globalVoiCache.get(seriesUid);
-            if (!targetVoi) return;
-
-            const currentVoi = viewport.getProperties().voiRange;
-            if (!currentVoi) return;
-
-            // Use a small epsilon to prevent jitter/infinite loops
-            const diff = Math.abs(currentVoi.lower - targetVoi.lower) + Math.abs(currentVoi.upper - targetVoi.upper);
-            if (diff > 0.5) {
-                console.log(`Viewport ${viewportId}: Enforcing Sticky VOI on series ${seriesUid}`);
-                viewport.setProperties({ voiRange: targetVoi });
-                viewport.render();
-            }
-        };
-
         const handleImageChange = (evt: any) => {
             if (evt.detail.viewportId !== viewportId) return;
-            enforceStickyVoi();
 
             const engine = getRenderingEngine(renderingEngineId);
             const viewport = engine?.getViewport(viewportId) as Types.IStackViewport | Types.IVolumeViewport;
             if (!viewport) return;
 
             const getDisplayVoi = () => {
-                const props = viewport.getProperties();
-                if (props.voiRange) {
+                const props = viewport?.getProperties();
+                if (props && props.voiRange) {
                     return {
                         windowWidth: props.voiRange.upper - props.voiRange.lower,
                         windowCenter: (props.voiRange.upper + props.voiRange.lower) / 2
@@ -587,47 +566,56 @@ export const Viewport = ({
 
             const displayVoi = getDisplayVoi();
 
-            setMetadata((prev: any) => ({
-                ...prev,
-                instanceNumber: viewport.getCurrentImageIdIndex() + 1,
-                windowWidth: displayVoi.windowWidth,
-                windowCenter: displayVoi.windowCenter,
-            }));
+            setMetadata((prev: any) => {
+                if (!mountedRef.current) return prev;
+                let currentIdx = 0;
+                try {
+                    if ((viewport as Types.IStackViewport).getCurrentImageIdIndex) {
+                        currentIdx = (viewport as Types.IStackViewport).getCurrentImageIdIndex();
+                    }
+                } catch (e) { }
+
+                return {
+                    ...prev,
+                    instanceNumber: currentIdx + 1,
+                    windowWidth: displayVoi?.windowWidth ?? 1,
+                    windowCenter: displayVoi?.windowCenter ?? 0.5,
+                };
+            });
+        };
+
+        const handleRendered = (evt: any) => {
+            if (evt.detail.viewportId !== viewportId) return;
+            if (!mountedRef.current) return;
+
+            // Reveal on first frame, but wait a TINY bit for the browser paint to settle
+            if (!isComposed) {
+                setTimeout(() => {
+                    if (mountedRef.current) {
+                        setIsComposed(true);
+                        console.log(`Viewport ${viewportId}: Revealed via ${evt.type} + buffer`);
+                    }
+                }, 150);
+            }
+            handleImageChange(evt);
         };
 
         const handleVoiModified = (evt: any) => {
             if (evt.detail.viewportId !== viewportId) return;
             const engine = getRenderingEngine(renderingEngineId);
-            const viewport = engine?.getViewport(viewportId) as Types.IStackViewport;
-            if (!viewport) return;
-
-            const props = viewport.getProperties();
-            if (props.voiRange && seriesUid) {
-                const newVoi = { ...props.voiRange };
-                manualVoiRange.current = newVoi;
-                globalVoiCache.set(seriesUid, newVoi);
-            }
-
+            if (!engine?.getViewport(viewportId)) return;
             handleImageChange(evt);
         };
 
-        const handleCameraModified = (evt: any) => {
-            if (evt.detail.viewportId !== viewportId) return;
-            // CAMERA_MODIFIED is often triggered by resetCamera which can reset VOI on some versions of CS
-            enforceStickyVoi();
-        };
-
         const element = elementRef.current;
-        element?.addEventListener(Enums.Events.STACK_NEW_IMAGE, handleImageChange);
+        element?.addEventListener(Enums.Events.IMAGE_RENDERED, handleRendered);
         element?.addEventListener(Enums.Events.VOI_MODIFIED, handleVoiModified);
-        element?.addEventListener(Enums.Events.CAMERA_MODIFIED, handleCameraModified);
 
         return () => {
-            element?.removeEventListener(Enums.Events.STACK_NEW_IMAGE, handleImageChange);
+            element?.removeEventListener(Enums.Events.IMAGE_RENDERED, handleRendered);
             element?.removeEventListener(Enums.Events.VOI_MODIFIED, handleVoiModified);
-            element?.removeEventListener(Enums.Events.CAMERA_MODIFIED, handleCameraModified);
         };
-    }, [viewportId, renderingEngineId, isThumbnail, isReady, seriesUid]);
+    }, [viewportId, renderingEngineId, isThumbnail, isReady, seriesUid, isComposed]);
 
     const handleSliceChange = (sliceIndex: number) => {
         const engine = getRenderingEngine(renderingEngineId);
@@ -643,7 +631,23 @@ export const Viewport = ({
 
     return (
         <div className="w-full h-full relative bg-black group overflow-hidden">
-            <div ref={elementRef} className="w-full h-full" onContextMenu={(e) => e.preventDefault()} />
+            <div
+                ref={elementRef}
+                className={`w-full h-full transition-opacity duration-300 ${isComposed ? 'opacity-100' : 'opacity-0'}`}
+                onContextMenu={(e) => e.preventDefault()}
+            />
+
+            {/* Loading Spinner during composition or explicit status */}
+            {(!isComposed || status) && seriesUid && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black z-30 pointer-events-none">
+                    <div className="flex flex-col items-center gap-3">
+                        <div className="w-10 h-10 border-4 border-peregrine-accent border-t-transparent rounded-full animate-spin" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-white/40">
+                            {status || 'Composing...'}
+                        </span>
+                    </div>
+                </div>
+            )}
 
             {/* Active Highlight & Label */}
             {isActive && (
@@ -677,15 +681,7 @@ export const Viewport = ({
                 </div>
             )}
 
-            {!isThumbnail && showOverlays && seriesUid && <OverlayManager metadata={metadata} />}
-            {status && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20">
-                    <div className="flex flex-col items-center gap-3">
-                        <div className="w-8 h-8 border-2 border-peregrine-accent border-t-transparent rounded-full animate-spin" />
-                        <span className="text-[10px] font-black uppercase tracking-widest text-white/50">{status}</span>
-                    </div>
-                </div>
-            )}
+            {!isThumbnail && showOverlays && seriesUid && isComposed && <OverlayManager metadata={metadata} />}
         </div>
     );
 };

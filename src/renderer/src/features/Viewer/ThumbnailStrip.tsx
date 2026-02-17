@@ -97,11 +97,17 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
 
             // 3. Process series in PARALLEL to avoid serial await bottlenecks
             const allSeries: SeriesSummary[] = await Promise.all(seriesDocs.map(async (s) => {
-                // Fetch ONLY the first image for the thumbnail (fastest)
-                const firstImage = await db.T_FilePath.findOne({
+                // Fetch the middle image for the thumbnail (more representative)
+                const count = s.numberOfSeriesRelatedInstances || 0;
+                const middleIndex = Math.floor(count / 2);
+
+                const firstImageResults = await db.T_FilePath.find({
                     selector: { seriesInstanceUID: s.seriesInstanceUID },
-                    sort: [{ instanceNumber: 'asc' }]
+                    sort: [{ instanceNumber: 'asc' }],
+                    limit: 1,
+                    skip: middleIndex > 0 ? middleIndex : 0
                 }).exec();
+                const firstImage = firstImageResults[0];
 
                 const parentStudy = studies.find(sd => sd.studyInstanceUID === s.studyInstanceUID);
 

@@ -255,9 +255,9 @@ const AppContent = () => {
         }
 
         if (view === '2D' && activeView !== '2D') {
-            // Reset orientations when explicitly clicking 2D to "Default" all viewports?
-            // Or maybe keep them? Usually, clicking 2D means "Go back to grid".
-            // Let's keep them so the user can see their custom orientations in the grid.
+            // Reset orientations to Default when returning to 2D grid
+            // to ensure they mount as StackViewports.
+            setViewportOrientations({});
         }
 
         setActiveView(view);
@@ -267,6 +267,8 @@ const AppContent = () => {
             setAppMode('VIEWER');
             if (view === 'MPR') {
                 setActiveTool('Crosshairs');
+            } else if (activeTool === 'Crosshairs') {
+                setActiveTool('WindowLevel');
             }
         }
     };
@@ -626,6 +628,7 @@ const AppContent = () => {
                 onAutoRotateToggle={() => setIsAutoRotating(!isAutoRotating)}
                 showOverlays={showOverlays}
                 onToggleOverlays={() => setShowOverlays(prev => !prev)}
+                activeViewportOrientation={viewportOrientations[activeViewportIndex] || 'Default'}
                 onPresetSelect={(preset) => {
                     setViewportVoiOverrides(prev => ({
                         ...prev,
@@ -796,6 +799,7 @@ const AppContent = () => {
                                             )}
 
                                             <Viewport
+                                                key={`${vp.id}-${activeView}-${viewportOrientations[index] || 'Default'}`}
                                                 viewportId={vp.id}
                                                 renderingEngineId="peregrine-engine"
                                                 seriesUid={vp.seriesUid}
@@ -817,16 +821,16 @@ const AppContent = () => {
                                 </div>
                             )}
 
-                            {(activeView === 'MPR' || activeView === '3D' || activeView === 'Axial' || activeView === 'Coronal' || activeView === 'Sagittal') && (
+                            {(activeView === 'MPR' || activeView === '3D') && (
                                 <div className="absolute inset-0">
-                                    {(activeView === 'MPR' || activeView === 'Axial' || activeView === 'Coronal' || activeView === 'Sagittal') ? (
+                                    {activeView === 'MPR' ? (
                                         <OrthoView
                                             key={viewports[activeViewportIndex].seriesUid || 'no-series'}
                                             seriesUid={viewports[activeViewportIndex].seriesUid || ''}
                                             activeTool={activeTool}
                                             projectionMode={projectionMode}
                                             slabThickness={slabThickness}
-                                            orientation={activeView === 'MPR' ? 'MPR' : activeView}
+                                            orientation="MPR"
                                         />
                                     ) : (
                                         <VRView

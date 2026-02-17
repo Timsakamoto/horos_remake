@@ -97,6 +97,7 @@ interface Props {
     showOverlays?: boolean;
     onToggleOverlays?: () => void;
     onPresetSelect?: (preset: WWLPreset) => void;
+    activeViewportOrientation?: 'Axial' | 'Coronal' | 'Sagittal' | 'Default';
 }
 
 export const Toolbar = ({
@@ -129,8 +130,10 @@ export const Toolbar = ({
     onAutoRotateToggle,
     showOverlays = true,
     onToggleOverlays,
-    onPresetSelect
+    onPresetSelect,
+    activeViewportOrientation,
 }: Props) => {
+    // console.log('Toolbar Render:', { activeView, activeViewportOrientation });
 
     const [showMPRControls, setShowMPRControls] = useState(false);
     const [showWLPresets, setShowWLPresets] = useState(false);
@@ -138,6 +141,7 @@ export const Toolbar = ({
     const renderViewButton = (mode: ViewMode, Icon: any, label: string) => {
         const isMprOr3D = mode === 'MPR' || mode === '3D';
         const isDisabled = !!(isMprOr3D && activeModality && ['CR', 'DX', 'MG', 'RF', 'XA'].includes(activeModality));
+        const isButtonActive = activeView === mode || activeViewportOrientation === mode;
 
         const handleClick = () => {
             if (isDisabled) return;
@@ -145,7 +149,7 @@ export const Toolbar = ({
             const isSectional = mode === 'Axial' || mode === 'Coronal' || mode === 'Sagittal';
 
             if (isSectional) {
-                if (activeView === mode) {
+                if (activeViewportOrientation === mode) {
                     setShowMPRControls(!showMPRControls);
                 } else {
                     onViewChange(mode);
@@ -164,7 +168,7 @@ export const Toolbar = ({
                     disabled={isDisabled}
                     className={`
                     relative flex flex-col items-center justify-center min-w-[52px] h-[52px] rounded-lg transition-all duration-300 gap-1
-                    ${activeView === mode
+                    ${isButtonActive
                             ? 'bg-white text-peregrine-accent shadow-[0_2px_8px_rgba(0,0,0,0.08)] scale-[1.02] z-10'
                             : isDisabled
                                 ? 'text-gray-200 cursor-not-allowed opacity-30'
@@ -172,15 +176,15 @@ export const Toolbar = ({
                 `}
                     title={isDisabled ? `${label} (Not supported for ${activeModality})` : label}
                 >
-                    <Icon size={18} strokeWidth={activeView === mode ? 2.5 : 2} />
-                    <span className={`text-[10px] font-black uppercase tracking-tighter ${activeView === mode ? 'opacity-100' : 'opacity-60'}`}>{label}</span>
-                    {activeView === mode && (
+                    <Icon size={18} strokeWidth={isButtonActive ? 2.5 : 2} />
+                    <span className={`text-[10px] font-black uppercase tracking-tighter ${isButtonActive ? 'opacity-100' : 'opacity-60'}`}>{label}</span>
+                    {isButtonActive && (
                         <div className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-peregrine-accent animate-in fade-in zoom-in duration-500" />
                     )}
                 </button>
 
                 {/* Section Controls Popup (Axial, Coronal, Sagittal) */}
-                {(mode === 'Axial' || mode === 'Coronal' || mode === 'Sagittal') && activeView === mode && showMPRControls && (
+                {(mode === 'Axial' || mode === 'Coronal' || mode === 'Sagittal') && activeViewportOrientation === mode && showMPRControls && (
                     <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-white/90 backdrop-blur-md border border-gray-200 shadow-xl rounded-xl p-3 z-50 animate-in fade-in zoom-in-95 duration-200 w-64 flex flex-col gap-3">
                         {/* Triangle Arrow */}
                         <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white rotate-45 border-t border-l border-gray-200" />
