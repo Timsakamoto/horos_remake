@@ -245,6 +245,14 @@ export const useViewportLoader = ({
 
                 setMetadata(prev => ({ ...prev, totalInstances: nSlices, instanceNumber: midIndex + 1 }));
             } else {
+                const viewport = renderingEngine.getViewport(viewportId) as Types.IStackViewport;
+                try {
+                    await viewport.setStack(ids, initialIndex);
+                } catch (stackErr) {
+                    console.error(`[useViewportLoader] ${viewportId}: setStack FAILED:`, stackErr);
+                    setStatus('Stack Error');
+                    return;
+                }
                 setMetadata(prev => ({ ...prev, totalInstances: ids.length, instanceNumber: initialIndex + 1 }));
             }
 
