@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { getRenderingEngine, metaData } from '@cornerstonejs/core';
+import { getRenderingEngine } from '@cornerstonejs/core';
 import {
     ToolGroupManager,
     WindowLevelTool,
@@ -71,6 +71,7 @@ export const CornerstoneManager = () => {
 
                 // Default orientations and global tools
                 // Default orientations and global tools - NO PRIMARY MOUSE ASSIGNMENTS
+                toolGroup.setToolActive(StackScrollMouseWheelTool.toolName);
                 toolGroup.setToolActive(ReferenceLinesTool.toolName);
             }
 

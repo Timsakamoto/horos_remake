@@ -21,7 +21,6 @@ interface OverlayProps {
         sliceThickness?: number;
         kvp?: string;
         ma?: string;
-        frameOfReferenceUID?: string;
     };
     isActive?: boolean;
 }
@@ -66,11 +65,6 @@ export const OverlayManager: React.FC<OverlayProps> = ({ metadata, isActive = fa
                 <div className="text-[14px]">
                     Im: {metadata.instanceNumber || 0} / {metadata.totalInstances || 0}
                 </div>
-                {metadata.frameOfReferenceUID && (
-                    <div className="text-[8px] text-yellow-500/50 mt-1 font-mono break-all max-w-[150px]">
-                        FOR: {metadata.frameOfReferenceUID}
-                    </div>
-                )}
             </div>
 
             {/* Orientation Markers (Optional but good for 3D/MPR) */}
