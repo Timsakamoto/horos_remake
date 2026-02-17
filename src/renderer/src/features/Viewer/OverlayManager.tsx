@@ -21,6 +21,7 @@ interface OverlayProps {
         sliceThickness?: number;
         kvp?: string;
         ma?: string;
+        cacheProgress?: number;
     };
     isActive?: boolean;
 }
@@ -60,11 +61,16 @@ export const OverlayManager: React.FC<OverlayProps> = ({ metadata, isActive = fa
                 </div>
             </div>
 
-            {/* Bottom Right: Instance Info */}
+            {/* Bottom Right: Instance Info & Cache Progress */}
             <div className="absolute bottom-4 right-4 flex flex-col items-end gap-0.5 text-right font-black">
                 <div className="text-[14px]">
                     Im: {metadata.instanceNumber || 0} / {metadata.totalInstances || 0}
                 </div>
+                {metadata.cacheProgress !== undefined && metadata.cacheProgress < 100 && (
+                    <div className="text-[9px] text-peregrine-accent animate-pulse mt-0.5">
+                        CACHING {metadata.cacheProgress}%
+                    </div>
+                )}
             </div>
 
             {/* Orientation Markers (Optional but good for 3D/MPR) */}

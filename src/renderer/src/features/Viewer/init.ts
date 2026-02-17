@@ -50,6 +50,9 @@ export const initCornerstone = async () => {
     await csRenderInit();
     await csToolsInit();
 
+    // 1.1 Configure Cache (2GB)
+    cornerstone.cache.setMaxCacheSize(2048 * 1024 * 1024);
+
     // 2. Register Tools Globally (Once)
     const tools = [
         WindowLevelTool,

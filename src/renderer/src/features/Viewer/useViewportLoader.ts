@@ -245,17 +245,51 @@ export const useViewportLoader = ({
 
                 setMetadata(prev => ({ ...prev, totalInstances: nSlices, instanceNumber: midIndex + 1 }));
             } else {
-                const viewport = renderingEngine.getViewport(viewportId) as Types.IStackViewport;
-                console.log(`[useViewportLoader] ${viewportId}: Calling setStack with ${ids.length} images`);
-                try {
-                    await viewport.setStack(ids, initialIndex);
-                    console.log(`[useViewportLoader] ${viewportId}: setStack success`);
-                } catch (stackErr) {
-                    console.error(`[useViewportLoader] ${viewportId}: setStack FAILED:`, stackErr);
-                    setStatus('Stack Error');
-                    return;
-                }
                 setMetadata(prev => ({ ...prev, totalInstances: ids.length, instanceNumber: initialIndex + 1 }));
+            }
+
+            // --- ★ Background Caching (Horos Parity) ---
+            if (!isThumbnail && ids.length > 1) {
+                const triggerBackgroundCache = async () => {
+                    const CHUNK_SIZE = 5;
+                    let loadedCount = 0;
+
+                    // Create a prioritized list: current index first, then outwards
+                    const priorityIds = [...ids];
+                    priorityIds.sort((a, b) => {
+                        const distA = Math.abs(ids.indexOf(a) - initialIndex);
+                        const distB = Math.abs(ids.indexOf(b) - initialIndex);
+                        return distA - distB;
+                    });
+
+                    for (let i = 0; i < priorityIds.length; i += CHUNK_SIZE) {
+                        if (!mountedRef.current || lastSeriesUidRef.current !== seriesUid) break;
+                        const chunk = priorityIds.slice(i, i + CHUNK_SIZE);
+
+                        await Promise.all(chunk.map(async (id) => {
+                            try {
+                                if (!cache.getImage(id)) {
+                                    await imageLoader.loadAndCacheImage(id);
+                                }
+                                loadedCount++;
+                            } catch (e) {
+                                // Silent failure for background cache
+                                loadedCount++;
+                            }
+                        }));
+
+                        const progress = Math.round((loadedCount / ids.length) * 100);
+                        if (mountedRef.current) {
+                            setMetadata(prev => ({ ...prev, cacheProgress: progress }));
+                        }
+
+                        // Breathing room for UI
+                        await new Promise(r => setTimeout(r, 100));
+                    }
+                };
+
+                // Start after a short delay to ensure initial render is prioritized
+                setTimeout(triggerBackgroundCache, 500);
             }
 
             const viewport = renderingEngine.getViewport(viewportId) as Types.IStackViewport | Types.IVolumeViewport;

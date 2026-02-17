@@ -48,6 +48,7 @@ export interface ViewportMetadata {
     modality: string;
     instanceNumber: number;
     totalInstances: number;
+    cacheProgress?: number;
     windowWidth?: number;
     windowCenter?: number;
 }
@@ -62,6 +63,7 @@ export const INITIAL_METADATA: ViewportMetadata = {
     modality: '',
     instanceNumber: 0,
     totalInstances: 0,
+    cacheProgress: undefined,
     windowWidth: undefined,
     windowCenter: undefined
 };
