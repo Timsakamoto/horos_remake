@@ -64,7 +64,7 @@ export const PACSPreferences: React.FC = () => {
 
                 {/* 1. Local Node Status Card */}
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] p-6 space-y-4 hover:shadow-[0_8px_30px_-4px_rgba(0,0,0,0.08)] transition-all duration-300">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col md:flex-row md:items-center gap-6">
                         <div className="flex items-center gap-4 shrink-0">
                             <div className={`relative flex items-center justify-center w-12 h-12 rounded-2xl transition-colors duration-500 ${localListener.isRunning ? 'bg-green-50 text-green-500' : 'bg-gray-50 text-gray-300'}`}>
                                 <Activity size={24} className={localListener.isRunning ? 'animate-pulse' : ''} />
@@ -75,29 +75,28 @@ export const PACSPreferences: React.FC = () => {
                                     </span>
                                 )}
                             </div>
-                            <div className="min-w-[120px]">
+                            <div className="min-w-[140px]">
                                 <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Local Listener</h3>
                                 <div className="flex items-center gap-2">
-                                    <span className="text-lg font-black text-gray-800 tracking-tight truncate max-w-[150px]">{localListener.aeTitle}</span>
+                                    <span className="text-lg font-black text-gray-800 tracking-tight truncate max-w-[120px]">{localListener.aeTitle}</span>
                                     <span className="text-xs font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded-md">:{localListener.port}</span>
                                 </div>
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-6 overflow-hidden">
+                        <div className="flex-1 flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
                             {!localListener.isRunning && (
-                                <div className="flex items-center gap-2 bg-gray-50 p-1.5 rounded-xl border border-gray-100 group/input focus-within:border-peregrine-accent focus-within:bg-white transition-all">
-                                    <div className="flex flex-col px-1">
+                                <div className="flex items-center gap-2 bg-gray-50 p-1.5 rounded-xl border border-gray-100 group/input focus-within:border-peregrine-accent focus-within:bg-white transition-all flex-1 max-w-sm">
+                                    <div className="flex flex-col flex-1 px-2 border-r border-gray-200">
                                         <span className="text-[8px] font-black text-gray-400 uppercase">AE Title</span>
                                         <input
-                                            className="w-28 py-0.5 text-xs font-mono bg-transparent outline-none uppercase placeholder-gray-300 focus:text-peregrine-accent"
+                                            className="w-full py-0.5 text-xs font-mono bg-transparent outline-none uppercase placeholder-gray-300 focus:text-peregrine-accent"
                                             value={localListener.aeTitle}
                                             onChange={e => setLocalListener({ ...localListener, aeTitle: e.target.value.toUpperCase() })}
                                             placeholder="AET"
                                         />
                                     </div>
-                                    <div className="w-px h-6 bg-gray-200" />
-                                    <div className="flex flex-col px-1">
+                                    <div className="flex flex-col px-2">
                                         <span className="text-[8px] font-black text-gray-400 uppercase">Port</span>
                                         <input
                                             className="w-16 py-0.5 text-xs font-mono bg-transparent outline-none focus:text-peregrine-accent"
@@ -111,13 +110,13 @@ export const PACSPreferences: React.FC = () => {
                             )}
                             <button
                                 onClick={toggleListener}
-                                className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-4 transition-all shadow-lg active:scale-[0.98] shrink-0 ${localListener.isRunning
+                                className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-4 transition-all shadow-lg active:scale-[0.98] whitespace-nowrap ${localListener.isRunning
                                     ? 'bg-white border-2 border-red-100 text-red-500 hover:bg-red-50 shadow-red-500/5'
                                     : 'bg-green-500 text-white hover:bg-green-600 shadow-green-500/20'
                                     }`}
                             >
                                 {localListener.isRunning ? <Square size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
-                                {localListener.isRunning ? 'Stop Server' : 'Start Server'}
+                                {localListener.isRunning ? 'Stop Listener' : 'Start Listener'}
                             </button>
                         </div>
                     </div>

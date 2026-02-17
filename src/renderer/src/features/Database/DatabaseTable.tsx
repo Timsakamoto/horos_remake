@@ -36,7 +36,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
     const [showCopyFeedback, setShowCopyFeedback] = useState(false);
 
     // Send to PACS State
-    const { servers, sendToPacs } = usePACS();
+    const { servers, sendToPacs, localListener } = usePACS();
     const [sendMenu, setSendMenu] = useState<{ x: number, y: number, type: 'study' | 'series', uid: string } | null>(null);
     const [showSendModal, setShowSendModal] = useState(false);
 
@@ -359,7 +359,13 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
             </div>
             {/* Table Header - Peregrine Slate Style */}
             <div className="grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] bg-gradient-to-b from-[#e8e8e8] to-[#d0d0d0] border-b border-[#a0a0a0] px-4 py-1.5 text-[9px] font-black uppercase tracking-tight text-gray-700 shadow-sm z-20">
-                <div className="border-r border-gray-300 pr-2 last:border-none flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('patientName')}>Patient Name{getSortIcon('patientName')}</div>
+                <div className="border-r border-gray-300 pr-2 last:border-none flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('patientName')}>
+                    <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full shadow-sm ${localListener.isRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} title={localListener.isRunning ? 'DICOM Listener Online' : 'DICOM Listener Offline'} />
+                        Patient Name
+                    </div>
+                    {getSortIcon('patientName')}
+                </div>
                 <div className="border-r border-gray-300 px-2 last:border-none flex items-center">Patient ID</div>
                 <div className="border-r border-gray-300 px-2 last:border-none flex items-center">Birth Date</div>
                 <div className="border-r border-gray-300 px-2 last:border-none flex items-center">Sex</div>

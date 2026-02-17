@@ -21,6 +21,7 @@ interface UseViewportLoaderProps {
     renderingEngineId: string;
     element: HTMLDivElement | null;
     seriesUid: string | null;
+    fusionSeriesUid?: string | null;
     isThumbnail?: boolean;
     orientation?: ViewportOrientation;
     initialImageId?: string | null;
@@ -37,6 +38,7 @@ export const useViewportLoader = ({
     renderingEngineId,
     element,
     seriesUid,
+    fusionSeriesUid,
     isThumbnail = false,
     orientation = 'Default',
     initialImageId = null,
@@ -236,8 +238,48 @@ export const useViewportLoader = ({
 
                 const volume = await volumeLoader.createAndCacheVolume(volumeId, { imageIds: ids });
                 await volume.load();
+
+                let volumeInputs: Types.IVolumeInput[] = [{ volumeId }];
+
+                // --- ★ Fusion Integration ★ ---
+                if (fusionSeriesUid) {
+                    const fusionVolumeId = `volume-${fusionSeriesUid}`;
+                    const fusionImages = await db.T_FilePath.find({
+                        selector: { seriesInstanceUID: fusionSeriesUid },
+                        sort: [{ instanceNumber: 'asc' }]
+                    }).exec();
+
+                    const fusionIds = fusionImages.map((img: any) => {
+                        let fullPath = img.filePath;
+                        if (fullPath && !(fullPath.startsWith('/') || /^[a-zA-Z]:/.test(fullPath)) && databasePath) {
+                            const sep = databasePath.includes('\\') ? '\\' : '/';
+                            fullPath = `${databasePath.replace(/[\\/]$/, '')}${sep}${fullPath.replace(/^[\\/]/, '')}`;
+                        }
+                        return `electronfile:${fullPath}`;
+                    });
+
+                    if (fusionIds.length > 0) {
+                        await prefetchMetadata(fusionIds);
+                        const fusionVolume = await volumeLoader.createAndCacheVolume(fusionVolumeId, { imageIds: fusionIds });
+                        await fusionVolume.load();
+
+                        // Detect PET to apply colormap
+                        const subseries = await db.T_Subseries.findOne(fusionSeriesUid).exec();
+                        const isPET = subseries?.modality === 'PT';
+
+                        volumeInputs.push({
+                            volumeId: fusionVolumeId,
+                            blendMode: Enums.BlendModes.ADDITIVE, // Standard for fusion
+                            callback: isPET ? ({ volumeActor }) => {
+                                // Apply "Hot Metal" or similar colormap for PET
+                                volumeActor.getProperty().setRGBTransferFunction(0, undefined); // Placeholder for actual colormap logic
+                            } : undefined
+                        });
+                    }
+                }
+
                 setVolumeProgress(100);
-                await viewport.setVolumes([{ volumeId }]);
+                await viewport.setVolumes(volumeInputs);
 
                 const orientationKey = orientation.toUpperCase() as keyof typeof Enums.OrientationAxis;
                 viewport.setOrientation(Enums.OrientationAxis[orientationKey]);
