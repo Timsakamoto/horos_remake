@@ -81,7 +81,7 @@ interface ViewerProviderProps {
 
 export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initialView = 'Database', initialSeriesUid }) => {
     const [activeView, setActiveView] = useState<ViewMode>(initialView);
-    const [activeTool, setActiveTool] = useState<ToolMode>('WindowLevel');
+    const [activeTool, setActiveTool] = useState<ToolMode>('Pan');
     const [activeViewportIndex, setActiveViewportIndex] = useState(0);
     const [layout, setLayout] = useState<Layout>({ rows: 1, cols: 1 });
     const [projectionMode, setProjectionMode] = useState<ProjectionMode>('NORMAL');
