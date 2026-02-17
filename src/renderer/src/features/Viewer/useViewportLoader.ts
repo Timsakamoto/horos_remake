@@ -12,6 +12,7 @@ import {
 import { useDatabase } from '../Database/DatabaseProvider';
 import { useSettings } from '../Settings/SettingsContext';
 import { prefetchMetadata } from './electronLoader';
+import { useBackgroundCache } from './useBackgroundCache';
 import { ViewportOrientation, ViewportMetadata, INITIAL_METADATA, VOI } from './types';
 
 
@@ -61,6 +62,8 @@ export const useViewportLoader = ({
     const hasValidDimensionsRef = useRef(false);
     const lastResizeTimeRef = useRef(0);
     const lastUpdateTimeRef = useRef(0);
+    const [imageIds, setImageIds] = useState<string[]>([]);
+    const [initialImgIdx, setInitialImgIdx] = useState(0);
     const THROTTLE_MS = 32; // ~30fps - prevents react render flood
 
     const loadSeries = useCallback(async () => {
@@ -255,6 +258,9 @@ export const useViewportLoader = ({
                 }
                 setMetadata(prev => ({ ...prev, totalInstances: ids.length, instanceNumber: initialIndex + 1 }));
             }
+
+            setImageIds(ids);
+            setInitialImgIdx(initialIndex);
 
             // --- ★ Background Caching (Horos Parity) ---
             if (!isThumbnail && ids.length > 1) {
@@ -548,6 +554,20 @@ export const useViewportLoader = ({
             onVoiChange?.();
         }
     }, [voiOverride, isReady, viewportId, renderingEngineId, onVoiChange]);
+
+    // Background Cache Integration
+    const { cacheProgress } = useBackgroundCache({
+        seriesUid,
+        imageIds,
+        initialIndex: initialImgIdx,
+        enabled: isReady && !isThumbnail
+    });
+
+    useEffect(() => {
+        if (cacheProgress !== undefined) {
+            setMetadata(prev => ({ ...prev, cacheProgress }));
+        }
+    }, [cacheProgress]);
 
     // Cleanup on unmount
     useEffect(() => {
