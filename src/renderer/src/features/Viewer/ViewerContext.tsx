@@ -6,9 +6,29 @@ import {
     ViewportState,
     Layout,
     VOI,
-    TOOL_GROUP_ID
+    TOOL_GROUP_ID,
+    RENDERING_ENGINE_ID,
 } from './types';
-import { ToolGroupManager, Enums as csToolsEnums, WindowLevelTool, PanTool, ZoomTool, LengthTool, RectangleROITool, EllipticalROITool, ArrowAnnotateTool, ProbeTool, AngleTool, BidirectionalTool, MagnifyTool, CrosshairsTool } from '@cornerstonejs/tools';
+import {
+    ToolGroupManager,
+    Enums as csToolsEnums,
+    WindowLevelTool,
+    PanTool,
+    ZoomTool,
+    LengthTool,
+    RectangleROITool,
+    EllipticalROITool,
+    ArrowAnnotateTool,
+    ProbeTool,
+    AngleTool,
+    BidirectionalTool,
+    MagnifyTool,
+    CrosshairsTool,
+} from '@cornerstonejs/tools';
+
+import {
+    getRenderingEngine,
+} from '@cornerstonejs/core';
 
 interface ViewerContextType {
     activeView: ViewMode;
@@ -43,7 +63,7 @@ interface ViewerContextType {
     setIsInitReady: (ready: boolean) => void;
 
     // Actions
-    onSeriesSelect: (seriesUid: string | null) => void;
+    onSeriesSelect: (seriesUid: string | null, targetIndex?: number) => void;
     handleViewChange: (view: ViewMode) => Promise<void>;
     handleLayoutChange: (rows: number, cols: number) => void;
     toggleCinePlaying: () => void;
@@ -53,8 +73,14 @@ interface ViewerContextType {
 
 const ViewerContext = createContext<ViewerContextType | undefined>(undefined);
 
-export const ViewerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-    const [activeView, setActiveView] = useState<ViewMode>('Database');
+interface ViewerProviderProps {
+    children: ReactNode;
+    initialView?: ViewMode;
+    initialSeriesUid?: string | null;
+}
+
+export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initialView = 'Database', initialSeriesUid }) => {
+    const [activeView, setActiveView] = useState<ViewMode>(initialView);
     const [activeTool, setActiveTool] = useState<ToolMode>('WindowLevel');
     const [activeViewportIndex, setActiveViewportIndex] = useState(0);
     const [layout, setLayout] = useState<Layout>({ rows: 1, cols: 1 });
@@ -78,20 +104,48 @@ export const ViewerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         }))
     );
 
-    const onSeriesSelect = useCallback((seriesUid: string | null) => {
+    // Initial series load from query params
+    useEffect(() => {
+        if (initialSeriesUid && initialView !== 'Database') {
+            console.log(`[ViewerContext] Auto-selecting initial series: ${initialSeriesUid}`);
+            setViewports(prev => {
+                const next = [...prev];
+                next[0] = { ...next[0], seriesUid: initialSeriesUid };
+                return next;
+            });
+        }
+    }, [initialSeriesUid, initialView]);
+
+    const onSeriesSelect = useCallback((seriesUid: string | null, targetIndex?: number) => {
         const isViewer = activeView !== 'Database' && activeView !== 'PACS';
+        const indexToUse = targetIndex ?? activeViewportIndex;
+
+        console.log(`[ViewerContext] onSeriesSelect: seriesUid=${seriesUid}, targetIndex=${targetIndex}, activeView=${activeView}, indexToUse=${indexToUse}`);
+
         if (isViewer) {
             setViewports(prev => {
                 const next = [...prev];
-                next[activeViewportIndex] = {
-                    ...next[activeViewportIndex],
+                // Ensure the slot exists and is consistent
+                if (!next[indexToUse]) {
+                    console.warn(`[ViewerContext] target slot ${indexToUse} missing, creating...`);
+                    next[indexToUse] = { id: `vp-${indexToUse}`, seriesUid: null, orientation: 'Default', voi: null };
+                }
+
+                next[indexToUse] = {
+                    ...next[indexToUse],
                     seriesUid,
                     orientation: 'Default',
                     voi: null
                 };
+                console.log(`[ViewerContext] updated viewports[${indexToUse}] to ${seriesUid}`);
                 return next;
             });
+            // If we explicitly targeted an index, make it active
+            if (targetIndex !== undefined) {
+                setActiveViewportIndex(targetIndex);
+            }
         } else {
+            console.log(`[ViewerContext] Database mode: updating slot 0`);
             setViewports(prev => {
                 const next = [...prev];
                 next[0] = { ...next[0], seriesUid, orientation: 'Default', voi: null };
@@ -101,6 +155,19 @@ export const ViewerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     }, [activeView, activeViewportIndex]);
 
     const handleViewChange = useCallback(async (view: ViewMode) => {
+        // ALWAYS signal return to database regardless of local state
+        if (view === 'Database' || view === 'PACS') {
+            const electron = (window as any).electron;
+            if (electron?.returnToDatabase) {
+                console.log(`[ViewerContext] Returning to database, signaling IPC...`);
+                await electron.returnToDatabase();
+            }
+        }
+
+        if (activeView === view) {
+            return;
+        }
+
         if (view === 'Axial' || view === 'Coronal' || view === 'Sagittal') {
             setViewports(prev => {
                 const next = [...prev];
@@ -147,13 +214,13 @@ export const ViewerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         if (!toolGroup) return;
 
         const allTools = [
-            'WindowLevel', 'Pan', 'Zoom', 'Length', 'RectangleROI', 'EllipticalROI',
-            'ArrowAnnotate', 'Probe', 'Angle', 'Bidirectional', 'Magnify', 'Crosshairs'
+            'WindowLevel', 'Pan', 'Zoom', 'Length', 'EllipticalROI', 'RectangleROI',
+            'ArrowAnnotate', 'Probe', 'Angle', 'Bidirectional', 'Magnify', 'Crosshairs', 'StackScroll'
         ];
 
-        // Reset all to passive
+        // Reset all to disabled (prevents zombie renders from passive tools)
         allTools.forEach(t => {
-            if (toolGroup.hasTool(t)) toolGroup.setToolPassive(t);
+            if (toolGroup.hasTool(t)) toolGroup.setToolDisabled(t);
         });
 
         // Map ToolMode to Cornerstone Tool Name
@@ -167,12 +234,17 @@ export const ViewerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
             'Arrow': ArrowAnnotateTool.toolName,
             'Probe': ProbeTool.toolName,
             'Angle': AngleTool.toolName,
-            'BIDIRECTIONAL': BidirectionalTool.toolName,
-            'MAGNIFY': MagnifyTool.toolName,
-            'CROSSHAIRS': CrosshairsTool.toolName,
-        } as any;
+            'Bidirectional': BidirectionalTool.toolName,
+            'Magnify': MagnifyTool.toolName,
+            'Crosshairs': CrosshairsTool.toolName,
+            'StackScroll': 'StackScroll',
+            'CobbAngle': 'CobbAngle',
+            'Text': 'TextAnnotate'
+        };
 
         const csToolName = toolMap[activeTool];
+        // Reference Lines removed as per user request (performance)
+
         if (csToolName && toolGroup.hasTool(csToolName)) {
             toolGroup.setToolActive(csToolName, {
                 bindings: [{ mouseButton: csToolsEnums.MouseBindings.Primary }]
@@ -191,6 +263,16 @@ export const ViewerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
             });
         }
     }, [activeTool]);
+
+    // Global Render trigger (throttled by react cycle)
+    useEffect(() => {
+        try {
+            const engine = getRenderingEngine(RENDERING_ENGINE_ID);
+            engine?.render();
+        } catch (e) {
+            console.warn('[ViewerContext] render failed:', e);
+        }
+    }, [activeViewportIndex, activeView, viewports]);
 
     const value: ViewerContextType = {
         activeView, setActiveView,

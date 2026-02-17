@@ -15,7 +15,8 @@ import {
     CobbAngleTool,
     BidirectionalTool,
     MagnifyTool,
-    CrosshairsTool
+    CrosshairsTool,
+    ReferenceLinesTool
 } from '@cornerstonejs/tools';
 import { initCornerstone } from './init';
 import { useViewer } from './ViewerContext';
@@ -44,18 +45,28 @@ export const CornerstoneManager = () => {
                     WindowLevelTool, PanTool, ZoomTool, StackScrollMouseWheelTool,
                     LengthTool, EllipticalROITool, RectangleROITool, ProbeTool,
                     AngleTool, ArrowAnnotateTool, CobbAngleTool, BidirectionalTool,
-                    MagnifyTool, CrosshairsTool
+                    MagnifyTool, CrosshairsTool, ReferenceLinesTool
                 ];
 
                 tools.forEach(toolClass => {
                     if (toolGroup && !toolGroup.hasTool(toolClass.toolName)) {
-                        toolGroup.addTool(toolClass.toolName);
+                        console.log(`[CornerstoneManager] Adding tool: ${toolClass.toolName}`);
+                        if (toolClass.toolName === ReferenceLinesTool.toolName) {
+                            toolGroup.addTool(toolClass.toolName, {
+                                renderOutline: true,
+                                isVisible: true,
+                            });
+                        } else {
+                            toolGroup.addTool(toolClass.toolName);
+                        }
                     }
                 });
 
-                // Default orientations for secondary buttons
+                // Default orientations and global tools
                 toolGroup.setToolPassive(PanTool.toolName);
                 toolGroup.setToolPassive(ZoomTool.toolName);
+                toolGroup.setToolActive(StackScrollMouseWheelTool.toolName);
+                toolGroup.setToolActive(ReferenceLinesTool.toolName);
             }
 
             console.log('[CornerstoneManager] System Ready');

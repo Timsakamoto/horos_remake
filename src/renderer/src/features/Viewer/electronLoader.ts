@@ -3,6 +3,7 @@ import cornerstoneDICOMImageLoader from '@cornerstonejs/dicom-image-loader';
 import dicomParser from 'dicom-parser';
 
 const metadataCache = new Map<string, any>();
+const seriesForCache = new Map<string, string>(); // Global registry for FrameOfReferenceUIDs
 
 /**
  * Normalizes imageId for metadata lookups (strips query parameters like ?forVolume=true)
@@ -88,7 +89,9 @@ function electronMetadataProvider(type: string, ...queries: any[]) {
 
     if (type === 'imagePlaneModule') {
         const pm = metadata.imagePlaneModule;
-        // console.log(`[electronMetadataProvider] Returning Plane for ${imageId}: Z=${pm.imagePositionPatient[2].toFixed(2)}`);
+        if (!imageId.includes('thumbnail')) {
+            console.log(`[MetadataDebug] imagePlaneModule request for ${imageId}: Pos=${pm.imagePositionPatient}, Orient=${pm.imageOrientationPatient}`);
+        }
         return pm;
     }
 
@@ -157,8 +160,17 @@ let totalLoadedImages = 0;
 export async function prefetchMetadata(imageIds: string[]) {
     console.log(`Loader: prefetchMetadata requested for ${imageIds.length} images`);
 
-    // ★ FORCE Consistency trackers (Scoped to this call to avoid concurrent race)
     let moduleFrameOfReferenceUID: string | null = null;
+
+    // Extract seriesUid from first imageId if possible to maintain global consistency
+    const firstImageId = imageIds[0];
+    const seriesUidMatch = firstImageId?.match(/seriesUid=([^&]+)/);
+    const seriesUid = seriesUidMatch ? seriesUidMatch[1] : 'default';
+
+    if (seriesForCache.has(seriesUid)) {
+        moduleFrameOfReferenceUID = seriesForCache.get(seriesUid)!;
+    }
+
     let moduleImageOrientationPatient: number[] | null = null;
     let modulePixelSpacing: number[] | null = null;
 
@@ -283,7 +295,8 @@ export async function prefetchMetadata(imageIds: string[]) {
                 let currentFoR = dataSet.string('x00200052') || '1.2.3';
                 if (!moduleFrameOfReferenceUID) {
                     moduleFrameOfReferenceUID = currentFoR;
-                    console.log(`[Loader] Captured Master FrameOfReferenceUID: ${moduleFrameOfReferenceUID}`);
+                    seriesForCache.set(seriesUid, moduleFrameOfReferenceUID);
+                    console.log(`[Loader] Captured Master FrameOfReferenceUID for ${seriesUid}: ${moduleFrameOfReferenceUID}`);
                 } else {
                     currentFoR = moduleFrameOfReferenceUID;
                 }

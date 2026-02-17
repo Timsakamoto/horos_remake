@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Activity } from 'lucide-react';
 import { ThumbnailStrip } from './features/Viewer/ThumbnailStrip';
 import { Viewport } from './features/Viewer/Viewport';
@@ -147,15 +147,6 @@ const AppContent = () => {
                 }
             }
         }
-
-        // Existing Tool Shortcuts
-        switch (e.key.toLowerCase()) {
-            case 'w': setActiveTool('WindowLevel'); break;
-            case 'z': setActiveTool('Zoom'); break;
-            case 'p': setActiveTool('Pan'); break;
-            case 'l': setActiveTool('Length'); break;
-            case 'm': setActiveTool('Magnify'); break;
-        }
     };
 
     // 1. Initialization Effect (Runs ONCE on mount/db)
@@ -193,13 +184,39 @@ const AppContent = () => {
         }
     }, [db]); // Only re-run if DB connection changes
 
+    // TAB shortcut for overlays
+    const handleKeyDownOverlays = (e: KeyboardEvent) => {
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            setShowOverlays(prev => !prev);
+        }
+    };
+
     // 2. Global Key Handler Effect (Re-binds when state changes)
     useEffect(() => {
         window.addEventListener('keydown', handleKeyDownGlobal);
+        window.addEventListener('keydown', handleKeyDownOverlays);
         return () => {
             window.removeEventListener('keydown', handleKeyDownGlobal);
+            window.removeEventListener('keydown', handleKeyDownOverlays);
         };
-    }, [db, activeViewportIndex, viewports, selectedStudyUid, activeView]);
+    }, [db, activeViewportIndex, viewports, selectedStudyUid, activeView, setActiveTool, setShowOverlays]);
+
+    // Actions and Tool Shortcuts
+    useEffect(() => {
+        const handleShortcuts = (e: KeyboardEvent) => {
+            if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
+            switch (e.key.toLowerCase()) {
+                case 'w': setActiveTool('WindowLevel'); break;
+                case 'z': setActiveTool('Zoom'); break;
+                case 'p': setActiveTool('Pan'); break;
+                case 'l': setActiveTool('Length'); break;
+                case 'm': setActiveTool('Magnify'); break;
+            }
+        };
+        window.addEventListener('keydown', handleShortcuts);
+        return () => window.removeEventListener('keydown', handleShortcuts);
+    }, [setActiveTool]);
 
     const onOpenViewer = () => {
         const activeSeriesUid = viewports[activeViewportIndex]?.seriesUid;
@@ -284,8 +301,7 @@ const AppContent = () => {
 
             if (!currentDropZone || currentDropZone.index !== index || currentDropZone.position === 'center') {
                 if (viewports[index].seriesUid === seriesUid) return;
-                onSeriesSelect(seriesUid);
-                setActiveViewportIndex(index);
+                onSeriesSelect(seriesUid, index);
                 return;
             }
 
@@ -332,7 +348,7 @@ const AppContent = () => {
 
                     const newIdx = targetR * newCols + targetC;
                     if (newIdx < 12) {
-                        nextViewports[newIdx] = { ...existing };
+                        nextViewports[newIdx] = { ...existing, id: `vp-${newIdx}` };
                     }
                 }
             }

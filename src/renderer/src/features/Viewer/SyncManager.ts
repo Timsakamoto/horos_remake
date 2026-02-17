@@ -2,6 +2,8 @@ import { SynchronizerManager } from '@cornerstonejs/tools';
 import { Enums, metaData as csMetaData, getRenderingEngine, type Types } from '@cornerstonejs/core';
 
 export const SYNC_GROUP_ID = 'stack-sync-group';
+export const REF_LINE_SYNC_ID = 'reference-line-sync-group';
+export const REF_LINE_STACK_SYNC_ID = 'reference-line-stack-sync-group';
 
 const getActualViewport = (viewportRef: any) => {
     if (!viewportRef) return null;
@@ -127,7 +129,65 @@ export const createSynchronizers = () => {
         );
     }
 
-    return { stackSync };
+    // 2. Reference Line Synchronizer (for camera/MPR updates)
+    let refLineSync = SynchronizerManager.getSynchronizer(REF_LINE_SYNC_ID);
+    if (!refLineSync) {
+        refLineSync = SynchronizerManager.createSynchronizer(
+            REF_LINE_SYNC_ID,
+            Enums.Events.CAMERA_MODIFIED,
+            (_sync, _source, targetRef) => {
+                const targetViewport = getActualViewport(targetRef);
+                if (targetViewport && !targetViewport.isDisabled) {
+                    // Use internal flag to avoid redundant RAFs
+                    if (!(targetViewport as any)._pendingRefLineRender) {
+                        (targetViewport as any)._pendingRefLineRender = true;
+                        requestAnimationFrame(() => {
+                            targetViewport.render();
+                            (targetViewport as any)._pendingRefLineRender = false;
+                        });
+                    }
+                }
+            }
+        );
+    }
+
+    // 3. Reference Line Stack Synchronizer (for paging updates)
+    let refLineStackSync = SynchronizerManager.getSynchronizer(REF_LINE_STACK_SYNC_ID);
+    if (!refLineStackSync) {
+        refLineStackSync = SynchronizerManager.createSynchronizer(
+            REF_LINE_STACK_SYNC_ID,
+            Enums.Events.STACK_NEW_IMAGE,
+            (_sync, _source, targetRef) => {
+                const targetViewport = getActualViewport(targetRef);
+                if (targetViewport && !targetViewport.isDisabled) {
+                    if (!(targetViewport as any)._pendingRefLineRender) {
+                        (targetViewport as any)._pendingRefLineRender = true;
+                        requestAnimationFrame(() => {
+                            targetViewport.render();
+                            (targetViewport as any)._pendingRefLineRender = false;
+                        });
+                    }
+                }
+            }
+        );
+    }
+
+    return { stackSync, refLineSync, refLineStackSync };
+};
+
+export const addViewportToRefLineSync = (viewportId: string, renderingEngineId: string) => {
+    const engine = getRenderingEngine(renderingEngineId);
+    if (!engine || !engine.getViewport(viewportId)) return;
+
+    let refLineSync = SynchronizerManager.getSynchronizer(REF_LINE_SYNC_ID);
+    let refLineStackSync = SynchronizerManager.getSynchronizer(REF_LINE_STACK_SYNC_ID);
+
+    if (!refLineSync || !refLineStackSync) {
+        ({ refLineSync, refLineStackSync } = createSynchronizers());
+    }
+
+    refLineSync?.add({ viewportId, renderingEngineId });
+    refLineStackSync?.add({ viewportId, renderingEngineId });
 };
 
 export const addViewportToSync = (viewportId: string, renderingEngineId: string) => {

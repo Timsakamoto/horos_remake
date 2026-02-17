@@ -18,6 +18,7 @@ export const VerticalPagingSlider = ({ min, max, value, onChange }: Props) => {
     const clampedValue = Math.max(min, Math.min(max, value));
     const percentage = ((clampedValue - min) / (max - min)) * 100;
 
+
     const handlePointerMove = (e: PointerEvent) => {
         if (!isDragging || !trackRef.current) return;
         const rect = trackRef.current.getBoundingClientRect();
@@ -49,7 +50,32 @@ export const VerticalPagingSlider = ({ min, max, value, onChange }: Props) => {
         };
     }, [isDragging, value, min, max]);
 
-    const handleTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    // native event blocking to ensure Cornerstone never sees these events
+    useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+
+        const blocker = (e: Event) => {
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+        };
+
+        // Block all events that could trigger a tool start in Cornerstone
+        const events = ['mousedown', 'pointerdown', 'touchstart', 'click', 'dblclick', 'contextmenu'];
+        events.forEach(name => {
+            el.addEventListener(name, blocker, { capture: true });
+        });
+
+        return () => {
+            events.forEach(name => {
+                el.removeEventListener(name, blocker, { capture: true });
+            });
+        };
+    }, []);
+
+    const handleTrackClick = (e: React.MouseEvent<HTMLDivElement> | React.PointerEvent<HTMLDivElement>) => {
         if (!trackRef.current) return;
         const rect = trackRef.current.getBoundingClientRect();
         const y = e.clientY - rect.top;
@@ -58,8 +84,13 @@ export const VerticalPagingSlider = ({ min, max, value, onChange }: Props) => {
         onChange(newValue);
     };
 
+    // --- DEBUG LOG ---
+    // console.log(`[SliderDebug] ${clampedValue}/${max} (${percentage.toFixed(1)}%)`);
+
     return (
-        <div className="absolute right-2 top-1/2 -translate-y-1/2 h-3/4 w-6 flex flex-col items-center group z-30 select-none">
+        <div
+            className="absolute right-2 top-1/2 -translate-y-1/2 h-3/4 w-6 flex flex-col items-center group z-30 select-none paging-slider-container"
+        >
             {/* Range Labels */}
             <div className="text-[9px] font-black text-white/30 mb-2 uppercase tracking-tighter">
                 {min}
@@ -71,12 +102,12 @@ export const VerticalPagingSlider = ({ min, max, value, onChange }: Props) => {
                 className="flex-1 w-1.5 bg-white/10 rounded-full relative cursor-pointer hover:bg-white/20 transition-colors"
                 onPointerDown={(e) => {
                     setIsDragging(true);
-                    handleTrackClick(e as any);
+                    handleTrackClick(e);
                 }}
             >
                 {/* Handle */}
                 <div
-                    className="absolute left-1/2 -translate-x-1/2 w-4 h-4 bg-white rounded-full shadow-lg border-2 border-peregrine-accent flex items-center justify-center cursor-grab active:cursor-grabbing hover:scale-110 transition-transform z-10"
+                    className="absolute left-1/2 -translate-x-1/2 w-4 h-4 bg-white rounded-full shadow-lg border-2 border-peregrine-accent flex items-center justify-center cursor-grab active:cursor-grabbing hover:scale-110 z-10"
                     style={{ top: `${percentage}%`, marginTop: '-8px' }}
                 >
                     <div className="w-1.5 h-1.5 bg-peregrine-accent rounded-full animate-pulse" />

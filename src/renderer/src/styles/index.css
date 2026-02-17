@@ -90,3 +90,25 @@
     border: 3px solid transparent;
     background-clip: padding-box;
 }
+
+/* Force Cornerstone SVG Layer Visibility */
+.svg-layer {
+    pointer-events: none !important;
+    z-index: 999 !important;
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+.cornerstone-canvas-container {
+    position: relative !important;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+
+.no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}

@@ -14,7 +14,6 @@ import { useSettings } from '../Settings/SettingsContext';
 import { prefetchMetadata } from './electronLoader';
 import { ViewportOrientation, ViewportMetadata, INITIAL_METADATA, VOI } from './types';
 
-const { ViewportType } = Enums;
 
 interface UseViewportLoaderProps {
     viewportId: string;
@@ -59,30 +58,10 @@ export const useViewportLoader = ({
     const mountedRef = useRef(true);
     const lastSeriesUidRef = useRef<string | null>(null);
     const lastOrientationRef = useRef<ViewportOrientation | null>(null);
-
-    // Dimension Observer
-    useEffect(() => {
-        if (!element) return;
-        const observer = new ResizeObserver(entries => {
-            for (const entry of entries) {
-                const { width, height } = entry.contentRect;
-                if (width > 0 && height > 0) {
-                    // Trigger engine resize immediately without full reload
-                    const engine = getRenderingEngine(renderingEngineId);
-                    if (engine) {
-                        try { engine.resize(); } catch (e) { }
-                    }
-                }
-            }
-        });
-        observer.observe(element);
-        return () => observer.disconnect();
-    }, [element, renderingEngineId]);
-
-    useEffect(() => {
-        mountedRef.current = true;
-        return () => { mountedRef.current = false; };
-    }, []);
+    const hasValidDimensionsRef = useRef(false);
+    const lastResizeTimeRef = useRef(0);
+    const lastUpdateTimeRef = useRef(0);
+    const THROTTLE_MS = 32; // ~30fps - prevents react render flood
 
     const loadSeries = useCallback(async () => {
         if (!db || !seriesUid || !element || !mountedRef.current) {
@@ -100,7 +79,7 @@ export const useViewportLoader = ({
 
         const isVolumeView = isVolumeOrientation && !hasMultiFrame;
 
-        // Fast Switch Optimization
+        // Fast Switch Optimization (Volume)
         if (isVolumeOrientation && seriesUid === lastSeriesUidRef.current && isReady) {
             const engine = getRenderingEngine(renderingEngineId);
             const viewport = engine?.getViewport(viewportId) as Types.IVolumeViewport;
@@ -119,6 +98,13 @@ export const useViewportLoader = ({
                 lastOrientationRef.current = orientation;
                 return;
             }
+        }
+
+        // Fast Switch Optimization (Stack/2D) - skip reload if same series & element
+        if (!isVolumeOrientation && seriesUid === lastSeriesUidRef.current && isReady) {
+            console.log(`[useViewportLoader] ${viewportId}: Fast switch/Skip reload for stable stack`);
+            setIsComposed(true);
+            return;
         }
 
         // Full Reload Logic
@@ -172,7 +158,7 @@ export const useViewportLoader = ({
             if (!renderingEngine) renderingEngine = new RenderingEngine(renderingEngineId);
 
             const existingViewport = renderingEngine.getViewport(viewportId);
-            const isTypeMatch = isVolumeView ? existingViewport?.type === ViewportType.ORTHOGRAPHIC : existingViewport?.type === ViewportType.STACK;
+            const isTypeMatch = isVolumeView ? existingViewport?.type === Enums.ViewportType.ORTHOGRAPHIC : existingViewport?.type === Enums.ViewportType.STACK;
 
             // Only disable and re-enable if element changed or type mismatch
             if (existingViewport && (!isTypeMatch || existingViewport.element !== element)) {
@@ -195,15 +181,17 @@ export const useViewportLoader = ({
 
             const viewportInput: Types.PublicViewportInput = {
                 viewportId,
-                type: isVolumeView ? ViewportType.ORTHOGRAPHIC : ViewportType.STACK,
+                type: isVolumeView ? Enums.ViewportType.ORTHOGRAPHIC : Enums.ViewportType.STACK,
                 element,
                 defaultOptions: { background: [0, 0, 0] },
             };
 
             if (element.clientWidth === 0 || element.clientHeight === 0) {
                 console.warn(`[useViewportLoader] Viewport element for ${viewportId} has 0 dimensions, waiting for resize...`);
+                hasValidDimensionsRef.current = false;
                 return;
             }
+            hasValidDimensionsRef.current = true;
 
             if (!renderingEngine.getViewport(viewportId)) {
                 try {
@@ -276,10 +264,8 @@ export const useViewportLoader = ({
             viewport.render();
             setStatus('Rendering...');
 
-            // --- ★ Thumbnail/Volume SPECIFIC: Set isComposed immediately to ensure visibility ---
-            if (isThumbnail || isVolumeView) {
-                setTimeout(() => { if (mountedRef.current) setIsComposed(true); }, 50);
-            }
+            // --- ★ Thumbnail/Volume/Stack: Set isComposed immediately to ensure visibility ---
+            setTimeout(() => { if (mountedRef.current) setIsComposed(true); }, 100);
 
             // Set Initial VOI
             setTimeout(async () => {
@@ -367,6 +353,43 @@ export const useViewportLoader = ({
         // Removed dimensions.width/height and onVoiChange to prevent jitter
     ]);
 
+    // Dimension Observer
+    useEffect(() => {
+        if (!element) return;
+        const observer = new ResizeObserver(entries => {
+            for (const entry of entries) {
+                const { width, height } = entry.contentRect;
+
+                if (width > 0 && height > 0) {
+                    const now = Date.now();
+                    if (now - lastResizeTimeRef.current > 33) {
+                        const engine = getRenderingEngine(renderingEngineId);
+                        if (engine) {
+                            try { engine.resize(); } catch (e) { }
+                        }
+                        lastResizeTimeRef.current = now;
+                    }
+
+                    // If we previously had 0 dimensions and were waiting to load, trigger it now
+                    if (!hasValidDimensionsRef.current) {
+                        console.log(`[useViewportLoader] ${viewportId}: Dimensions became valid (${width}x${height}), triggering load.`);
+                        hasValidDimensionsRef.current = true;
+                        loadSeries();
+                    }
+                } else {
+                    hasValidDimensionsRef.current = false;
+                }
+            }
+        });
+        observer.observe(element);
+        return () => observer.disconnect();
+    }, [element, renderingEngineId, viewportId, loadSeries]);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => { mountedRef.current = false; };
+    }, []);
+
     useEffect(() => {
         loadSeries();
     }, [loadSeries]);
@@ -377,6 +400,11 @@ export const useViewportLoader = ({
 
         const updateMetadata = (evt: any) => {
             if (evt.detail.viewportId !== viewportId) return;
+
+            // PERFORMANCE: Throttle React state updates during high-frequency scrolling
+            const now = Date.now();
+            if (now - lastUpdateTimeRef.current < THROTTLE_MS) return;
+            lastUpdateTimeRef.current = now;
 
             const engine = getRenderingEngine(renderingEngineId);
             const vp = engine?.getViewport(viewportId) as any;
@@ -409,6 +437,8 @@ export const useViewportLoader = ({
                     return prev;
                 }
 
+                console.log(`[useViewportLoader] Metadata Updated: ${instanceNumber}/${totalInstances} (WW: ${newWw}, WC: ${newWc})`);
+
                 return {
                     ...prev,
                     instanceNumber,
@@ -430,6 +460,8 @@ export const useViewportLoader = ({
 
         element.addEventListener(Enums.Events.IMAGE_RENDERED, handleRendered);
         element.addEventListener(Enums.Events.VOI_MODIFIED, updateMetadata);
+        element.addEventListener(Enums.Events.STACK_NEW_IMAGE, updateMetadata);
+        // element.addEventListener(Enums.Events.CAMERA_MODIFIED, updateMetadata); // Too high frequency, causing lag
 
         // Handle Active CLUT change reactively
         const applyCLUT = async () => {
@@ -453,6 +485,8 @@ export const useViewportLoader = ({
         return () => {
             element.removeEventListener(Enums.Events.IMAGE_RENDERED, handleRendered);
             element.removeEventListener(Enums.Events.VOI_MODIFIED, updateMetadata);
+            element.removeEventListener(Enums.Events.STACK_NEW_IMAGE, updateMetadata);
+            // element.removeEventListener(Enums.Events.CAMERA_MODIFIED, updateMetadata);
         };
     }, [viewportId, renderingEngineId, element, isReady, isThumbnail, orientation, activeCLUT]);
 
@@ -479,8 +513,10 @@ export const useViewportLoader = ({
             if (renderingEngineId && viewportId) {
                 try {
                     const engine = getRenderingEngine(renderingEngineId);
-                    if (engine) engine.disableElement(viewportId);
-                    console.log(`[useViewportLoader] ${viewportId}: Disabled on unmount`);
+                    if (engine && engine.getViewport(viewportId)) {
+                        engine.disableElement(viewportId);
+                        console.log(`[useViewportLoader] ${viewportId}: Disabled on unmount`);
+                    }
                 } catch (e) { }
             }
         };

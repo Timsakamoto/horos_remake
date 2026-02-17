@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     getRenderingEngine,
     Enums,
@@ -13,8 +13,9 @@ import {
     RENDERING_ENGINE_ID,
     ProjectionMode,
     VOI,
-    TOOL_GROUP_ID
+    TOOL_GROUP_ID,
 } from './types';
+import { addViewportToRefLineSync } from './SyncManager';
 
 interface Props {
     seriesUid: string;
@@ -36,8 +37,7 @@ export const OrthoView = ({
     slabThickness = 0,
     orientation = 'MPR',
     voiOverride,
-    onVoiChange,
-    activeTool
+    onVoiChange
 }: Props) => {
     const [axialElement, setAxialElement] = useState<HTMLDivElement | null>(null);
     const [sagittalElement, setSagittalElement] = useState<HTMLDivElement | null>(null);
@@ -78,16 +78,28 @@ export const OrthoView = ({
 
     // Register with toolgroup
     useEffect(() => {
-        if (!axial.isReady || !sagittal.isReady || !coronal.isReady) return;
-        const toolGroup = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
-        if (toolGroup) {
-            [AXIAL_VIEWPORT_ID, SAGITTAL_VIEWPORT_ID, CORONAL_VIEWPORT_ID].forEach(id => {
-                if (!toolGroup.getViewportIds().includes(id)) {
-                    toolGroup.addViewport(id, RENDERING_ENGINE_ID);
-                }
-            });
+        if (axial.isReady) {
+            const toolGroup = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
+            toolGroup?.addViewport(AXIAL_VIEWPORT_ID, RENDERING_ENGINE_ID);
+            addViewportToRefLineSync(AXIAL_VIEWPORT_ID, RENDERING_ENGINE_ID);
         }
-    }, [axial.isReady, sagittal.isReady, coronal.isReady]);
+    }, [axial.isReady]);
+
+    useEffect(() => {
+        if (sagittal.isReady) {
+            const toolGroup = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
+            toolGroup?.addViewport(SAGITTAL_VIEWPORT_ID, RENDERING_ENGINE_ID);
+            addViewportToRefLineSync(SAGITTAL_VIEWPORT_ID, RENDERING_ENGINE_ID);
+        }
+    }, [sagittal.isReady]);
+
+    useEffect(() => {
+        if (coronal.isReady) {
+            const toolGroup = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
+            toolGroup?.addViewport(CORONAL_VIEWPORT_ID, RENDERING_ENGINE_ID);
+            addViewportToRefLineSync(CORONAL_VIEWPORT_ID, RENDERING_ENGINE_ID);
+        }
+    }, [coronal.isReady]);
 
     // Update Slab/MIP
     useEffect(() => {
@@ -109,13 +121,26 @@ export const OrthoView = ({
 
     const handleSliderChange = (vpId: string, val: number) => {
         const re = getRenderingEngine(RENDERING_ENGINE_ID);
-        const vp = re?.getViewport(vpId) as Types.IVolumeViewport;
-        if (vp) {
-            const current = vp.getSliceIndex();
-            const delta = (val - 1) - current;
-            if (delta !== 0) csToolsUtils.scroll(vp, { delta });
+        const viewport = re?.getViewport(vpId);
+        if (!viewport) return;
+
+        const targetIndex = val - 1;
+
+        if ((viewport as any).setSliceIndex) {
+            (viewport as any).setSliceIndex(targetIndex);
+        } else if ((viewport as any).setImageIdIndex) {
+            (viewport as any).setImageIdIndex(targetIndex);
+        } else {
+            const current = (viewport as any).getSliceIndex ? (viewport as any).getSliceIndex() : (viewport as any).getCurrentImageIdIndex?.();
+            const delta = targetIndex - (current || 0);
+            if (delta !== 0) {
+                csToolsUtils.scroll(viewport, { delta });
+            }
         }
+
+        viewport.render();
     };
+
 
     const isLoading = !axial.isComposed || !sagittal.isComposed || !coronal.isComposed;
     const progress = Math.round((axial.volumeProgress + sagittal.volumeProgress + coronal.volumeProgress) / 3);
@@ -126,20 +151,31 @@ export const OrthoView = ({
 
         return (
             <div className={`relative flex-1 h-full border border-${color}-500/30 overflow-hidden group cursor-crosshair bg-black`}>
+                {/* CANVAS AREA */}
                 <div ref={setRef} className="w-full h-full" onContextMenu={e => e.preventDefault()} />
-                <div className={`absolute top-2 left-2 text-${color}-500 font-black text-xs opacity-50 group-hover:opacity-100 transition-opacity uppercase tracking-widest pointer-events-none`}>{label}</div>
 
-                {loader.isComposed && loader.metadata.totalInstances > 1 && (
-                    <VerticalPagingSlider
-                        min={1}
-                        max={loader.metadata.totalInstances}
-                        value={loader.metadata.instanceNumber}
-                        onChange={(v) => handleSliderChange(id, v)}
-                    />
+                {/* LABEL */}
+                <div className={`absolute top-2 left-2 text-${color}-500 font-black text-xs opacity-50 group-hover:opacity-100 transition-opacity uppercase tracking-widest pointer-events-none z-20`}>{label}</div>
+
+                {/* OVERLAYS (Pointer Events None) */}
+                {loader.isComposed && (
+                    <div className="absolute inset-0 pointer-events-none z-30">
+                        <OverlayManager metadata={loader.metadata} />
+                    </div>
                 )}
 
-                {loader.isComposed && (
-                    <OverlayManager metadata={loader.metadata} />
+                {/* SLIDER (Pointer Events Auto) */}
+                {loader.isComposed && loader.metadata.totalInstances > 1 && (
+                    <div className="absolute right-0 top-0 bottom-0 z-50 pointer-events-none">
+                        <div className="h-full relative pointer-events-auto">
+                            <VerticalPagingSlider
+                                min={1}
+                                max={loader.metadata.totalInstances}
+                                value={loader.metadata.instanceNumber}
+                                onChange={(v) => handleSliderChange(id, v)}
+                            />
+                        </div>
+                    </div>
                 )}
             </div>
         );

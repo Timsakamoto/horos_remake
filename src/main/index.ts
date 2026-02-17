@@ -267,12 +267,13 @@ ipcMain.handle('path:join', (_, ...args: string[]) => {
 ipcMain.handle('path:basename', (_, p: string) => basename(p))
 ipcMain.handle('path:dirname', (_, p: string) => dirname(p))
 
-ipcMain.handle('app:toggleMaximize', () => {
-    if (!win) return;
-    if (win.isMaximized()) {
-        win.unmaximize();
+ipcMain.handle('app:toggleMaximize', (event) => {
+    const targetWin = BrowserWindow.fromWebContents(event.sender);
+    if (!targetWin) return;
+    if (targetWin.isMaximized()) {
+        targetWin.unmaximize();
     } else {
-        win.maximize();
+        targetWin.maximize();
     }
 });
 
@@ -290,18 +291,25 @@ ipcMain.handle('app:resetIndexedDB', async () => {
 });
 
 ipcMain.handle('app:returnToDatabase', (event) => {
-    if (win && !win.isDestroyed()) {
+    console.log('[Main] Handling returnToDatabase request');
+
+    // 1. Restore or Create Main Window
+    if (!win || win.isDestroyed()) {
+        console.log('[Main] Main window missing, recreating...');
+        createWindow();
+    } else {
         win.show();
         win.focus();
-
-        // If the window calling this is NOT the main window, close it
-        const senderWin = BrowserWindow.fromWebContents(event.sender);
-        if (senderWin && senderWin !== win) {
-            senderWin.close();
-        }
-        return true;
     }
-    return false;
+
+    // 2. Close sender window if it's NOT the main window
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    if (senderWin && senderWin !== win) {
+        console.log(`[Main] Closing secondary window: ${senderWin.id}`);
+        senderWin.close();
+    }
+
+    return true;
 });
 
 ipcMain.on('app:openViewer', (event, seriesUid: string) => {
