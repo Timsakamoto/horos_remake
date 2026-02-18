@@ -15,7 +15,7 @@ export interface PatientDocType {
 }
 
 export const PatientSchema: RxJsonSchema<PatientDocType> = {
-    version: 8,
+    version: 9,
     primaryKey: 'id',
     type: 'object',
     properties: {
@@ -62,5 +62,5 @@ export const PatientSchema: RxJsonSchema<PatientDocType> = {
         }
     },
     required: ['id', 'patientName', 'patientID'],
-    indexes: ['patientNameNormalized', 'patientID', 'institutionName', 'patientBirthDate', 'patientSex', 'numberOfPatientRelatedInstances']
+    indexes: ['patientNameNormalized', 'patientID', 'institutionName', 'patientBirthDate', 'patientSex', 'numberOfPatientRelatedInstances', 'lastImportDateTime']
 };

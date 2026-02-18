@@ -26,6 +26,7 @@ export class DICOMService {
     private logLevel: LogLevel = LogLevel.INFO;
     private logFile: string | null = null;
     private activeJobs: Set<string> = new Set();
+    private isStarting: boolean = false;
 
     // Auto-restart state
     private autoRestartEnabled: boolean = true;
@@ -33,6 +34,7 @@ export class DICOMService {
     private lastRestartTime: number = 0;
     private currentPort: number = 11112; // Default
     private currentAeTitle: string = 'PEREGRINE';
+    private currentStoragePath: string | null = null;
 
     constructor() {
         this.setupIpc();
@@ -155,16 +157,16 @@ export class DICOMService {
             return jobManager.getJobs();
         });
 
-        ipcMain.handle('pacs:startListener', async (_, aet: string, port: number) => {
+        ipcMain.handle('pacs:startListener', async (_, aet: string, port: number, storagePath?: string) => {
             // Reset restart count on manual start
             this.restartCount = 0;
             this.autoRestartEnabled = true;
-            return this.startListener(aet, port);
+            return this.startListener(aet, port, storagePath);
         });
 
         ipcMain.handle('pacs:stopListener', async () => {
             this.autoRestartEnabled = false; // Disable auto-restart on manual stop
-            this.stopListener();
+            this.stopListener(true, 'IPC stop request');
             return true;
         });
 
@@ -457,13 +459,19 @@ export class DICOMService {
         this.logError(`Binary not found: ${binPath}`);
         return null;
     }
-    async startListener(aeTitle: string, port: number): Promise<boolean> {
-        // Save current config for auto-restart
-        this.currentAeTitle = aeTitle;
-        this.currentPort = port;
+    async startListener(aeTitle: string, port: number, customStoragePath?: string): Promise<boolean> {
+        if (this.isStarting) return false;
+        this.isStarting = true;
+        this.logInfo(`PACS Listener: startListener lock acquired for aet=${aeTitle}, port=${port}`);
 
         try {
-            await this.stopListener(false); // don't disable auto-restart
+            this.logInfo(`PACS Listener: startListener called with aet=${aeTitle}, port=${port}, path=${customStoragePath}`);
+            // Save current config for auto-restart
+            this.currentAeTitle = aeTitle || this.currentAeTitle;
+            this.currentPort = port || this.currentPort;
+            this.currentStoragePath = customStoragePath || this.currentStoragePath;
+
+            await this.stopListener(false, 'Restarting in startListener'); // don't disable auto-restart
 
             // Port Check
             const isPortInUse = await new Promise<boolean>((resolve) => {
@@ -484,6 +492,7 @@ export class DICOMService {
                 this.logError(`PACS Listener: Port ${port} is already in use.`);
                 return false;
             }
+            this.logInfo(`PACS Listener: Port ${port} is free.`);
 
             // Path to storescp binary
             const { app } = require('electron');
@@ -503,7 +512,7 @@ export class DICOMService {
                 }
             }
 
-            const storagePath = process.env.DICOM_STORAGE_PATH || path.join(app.getPath('userData'), 'dicom_storage');
+            const storagePath = customStoragePath || process.env.DICOM_STORAGE_PATH || path.join(app.getPath('userData'), 'dicom_storage');
             if (!fs.existsSync(storagePath)) fs.mkdirSync(storagePath, { recursive: true });
 
             // storescp arguments
@@ -523,25 +532,37 @@ export class DICOMService {
             this.logInfo(`Starting storescp: ${binPath} ${args.join(' ')}`);
 
             this.serverProcess = spawn(binPath, args);
+            this.logInfo(`PACS Listener: Spawned storescp (PID: ${this.serverProcess.pid})`);
 
-            if (!this.serverProcess) {
-                throw new Error('Failed to spawn storescp process');
+            if (!this.serverProcess || !this.serverProcess.pid) {
+                throw new Error('Failed to spawn storescp process or process died immediately');
             }
 
-            this.serverProcess.stdout?.on('data', (data) => {
+            const handleOutput = (data: any) => {
                 const msg = data.toString().trim();
-                // storescp logs to output. We treat it as INFO
-                if (msg) this.logInfo(`[storescp] ${msg}`);
-            });
+                if (!msg) return;
 
-            this.serverProcess.stderr?.on('data', (data) => {
-                const msg = data.toString().trim();
-                if (msg) {
-                    if (msg.includes('E:')) this.logError(`[storescp] ${msg}`);
-                    else if (msg.includes('W:')) this.logWarn(`[storescp] ${msg}`);
-                    else this.logInfo(`[storescp] ${msg}`);
+                const jobManager = JobManager.getInstance();
+
+                // Parse storescp "storing DICOM file" message
+                if (msg.includes('storing DICOM file:')) {
+                    const parts = msg.split('storing DICOM file:');
+                    if (parts.length > 1) {
+                        const filePath = parts[1].split(/[\r\n]/)[0].trim();
+                        if (filePath) {
+                            this.logInfo(`PACS Listener: Detected incoming file: ${filePath}`);
+                            jobManager.emit('storageProgress', { filePath });
+                        }
+                    }
                 }
-            });
+
+                if (msg.includes('E:')) this.logError(`[storescp] ${msg}`);
+                else if (msg.includes('W:')) this.logWarn(`[storescp] ${msg}`);
+                else if (this.logLevel === LogLevel.DEBUG) this.logInfo(`[storescp] ${msg}`);
+            };
+
+            this.serverProcess.stdout?.on('data', handleOutput);
+            this.serverProcess.stderr?.on('data', handleOutput);
 
             this.serverProcess.on('error', (err) => {
                 this.logError('storescp process error:', err);
@@ -561,6 +582,8 @@ export class DICOMService {
         } catch (e) {
             this.logError('PACS Listener: Startup error:', e);
             return false;
+        } finally {
+            this.isStarting = false;
         }
     }
 
@@ -580,7 +603,7 @@ export class DICOMService {
 
             setTimeout(() => {
                 if (this.autoRestartEnabled) {
-                    this.startListener(this.currentAeTitle, this.currentPort);
+                    this.startListener(this.currentAeTitle, this.currentPort, this.currentStoragePath || undefined);
                 }
             }, 2000);
         } else {
@@ -589,14 +612,14 @@ export class DICOMService {
         }
     }
 
-    async stopListener(disableAutoRestart: boolean = true) {
+    async stopListener(disableAutoRestart: boolean = true, reason: string = 'unspecified') {
         if (disableAutoRestart) {
             this.autoRestartEnabled = false;
         }
 
         return new Promise<void>((resolve) => {
             if (this.serverProcess) {
-                this.logInfo('Stopping storescp...');
+                this.logInfo(`Stopping storescp (Reason: ${reason})...`);
                 this.serverProcess.kill(); // SIGTERM
 
                 // Force kill if it doesn't exit after 1s

@@ -19,7 +19,7 @@ export interface IElectronAPI {
         search: (node: any, level: string, query: any) => Promise<any[]>;
         move: (node: any, destinationAet: string, level: string, keys: any) => Promise<boolean>;
         store: (node: any, filePaths: string[]) => Promise<boolean>;
-        startListener: (aet: string, port: number) => Promise<boolean>;
+        startListener: (aet: string, port: number, storagePath?: string) => Promise<boolean>;
         stopListener: () => Promise<boolean>;
         getJobs: () => Promise<any[]>;
         onJobUpdated: (callback: (job: any) => void) => () => void;

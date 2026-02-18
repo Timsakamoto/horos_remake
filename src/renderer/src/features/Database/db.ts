@@ -38,10 +38,12 @@ export type AntigravityDatabase = RxDatabase<AntigravityDatabaseCollections>;
 
 let dbPromise: Promise<AntigravityDatabase> | null = null;
 
-const DB_NAME = 'antigravity_v2';
+const DB_NAME = 'antigravity_v3';
+
+let isRetrying = false;
 
 const _create = async (): Promise<AntigravityDatabase> => {
-    console.log('DatabaseService: Creating database...');
+    console.log(`DatabaseService: Creating database (${DB_NAME})...`);
 
     try {
         const db = await createRxDatabase<AntigravityDatabaseCollections>({
@@ -72,7 +74,8 @@ const _create = async (): Promise<AntigravityDatabase> => {
                     8: (oldDoc) => ({
                         ...oldDoc,
                         lastImportDateTime: new Date().toISOString()
-                    })
+                    }),
+                    9: (oldDoc) => oldDoc
                 }
             },
             studies: {
@@ -91,7 +94,8 @@ const _create = async (): Promise<AntigravityDatabase> => {
                     6: (oldDoc) => oldDoc,
                     7: (oldDoc) => oldDoc,
                     8: (oldDoc) => oldDoc,
-                    9: (oldDoc) => oldDoc
+                    9: (oldDoc) => oldDoc,
+                    10: (oldDoc) => oldDoc
                 }
             },
             series: {
@@ -169,9 +173,35 @@ const _create = async (): Promise<AntigravityDatabase> => {
         });
 
         console.log('DatabaseService: Database created');
+        isRetrying = false; // Reset on success
         return db;
-    } catch (err) {
+    } catch (err: any) {
         console.error('DatabaseService: Error in _create:', err);
+
+        // Handle IndexedDB/Dexie corruption (UnknownError), Schema Mismatches (COL12, DB6), or general Dexie open fails
+        const isSchemaError = err.message?.includes('COL12') || err.message?.includes('DB6') || err.message?.includes('schema');
+        const isCorruption = err.name === 'UnknownError' ||
+            err.message?.includes('backing store') ||
+            err.message?.includes('DexieError');
+
+        if (!isRetrying && (isCorruption || isSchemaError)) {
+            isRetrying = true;
+            console.warn(`DatabaseService: Detected ${isSchemaError ? 'Schema Mismatch' : 'Corruption'}. Attempting automatic reset and retry...`);
+
+            try {
+                localStorage.setItem('peregrine_reimport_after_reset', 'true');
+                await removeDatabase();
+
+                // Wait a bit to ensure lock file is released by Chrome/OS
+                await new Promise(resolve => setTimeout(resolve, 500));
+
+                return await _create();
+            } catch (retryErr) {
+                console.error('DatabaseService: Automatic reset failed:', retryErr);
+                throw retryErr;
+            }
+        }
+
         throw err;
     }
 };
@@ -228,10 +258,17 @@ export const removeDatabase = async () => {
                         reject(err);
                     });
             };
-            req.onblocked = () => {
-                console.warn('DatabaseService: Native removal blocked by active connection');
-                // Even if blocked, we might want to resolve to allow reload to break the lock
-                resolve();
+            req.onblocked = async () => {
+                console.warn('DatabaseService: Native removal blocked by active connection. Triggering supreme reset...');
+                try {
+                    // @ts-ignore
+                    await window.electron.resetIndexedDB();
+                    console.log('DatabaseService: Supreme reset successful (after block)');
+                    resolve();
+                } catch (e) {
+                    console.error('DatabaseService: Supreme reset failed after block', e);
+                    resolve(); // Resolve anyway to allow retry
+                }
             };
         });
     }

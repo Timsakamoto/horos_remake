@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useDatabase } from '../Database/DatabaseProvider';
-import { usePACS } from '../PACS/PACSProvider';
 import { useSettings } from '../Settings/SettingsContext';
 import { Viewport } from './Viewport';
 
@@ -25,7 +24,7 @@ interface Props {
 }
 
 export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUid, defaultCols = 6, fixedCols }: Props) => {
-    const { db, thumbnailMap } = useDatabase();
+    const { db, thumbnailMap, setCheckedItems, setShowSendModal: setGlobalShowSendModal } = useDatabase();
     const { thumbnailCols: savedCols, setThumbnailCols: setSavedCols, databasePath } = useSettings();
     const [cols, setCols] = useState(fixedCols || savedCols || defaultCols);
     const [seriesList, setSeriesList] = useState<SeriesSummary[]>([]);
@@ -45,10 +44,7 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
         setSavedCols(newCols);
     };
 
-    const { servers, sendToPacs } = usePACS();
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, seriesUid: string } | null>(null);
-    const [showSendModal, setShowSendModal] = useState(false);
-    const [selectedSeriesForSend, setSelectedSeriesForSend] = useState<string | null>(null);
 
     useEffect(() => {
         if (!db || !patientId) {
@@ -317,8 +313,8 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                     <button
                         className="w-full text-left px-3 py-1.5 text-xs text-white hover:bg-peregrine-accent hover:text-white transition-colors flex items-center gap-2"
                         onClick={() => {
-                            setSelectedSeriesForSend(contextMenu.seriesUid);
-                            setShowSendModal(true);
+                            setCheckedItems(new Set([contextMenu.seriesUid]));
+                            setGlobalShowSendModal(true);
                             setContextMenu(null);
                         }}
                     >
@@ -327,40 +323,6 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                 </div>
             )}
 
-            {/* Send Modal */}
-            {showSendModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowSendModal(false)}>
-                    <div className="bg-[#1e1e1e] border border-white/10 rounded-xl w-[300px] p-4 shadow-2xl" onClick={e => e.stopPropagation()}>
-                        <h3 className="text-white font-bold text-sm mb-3">Send Series to PACS</h3>
-                        <div className="space-y-1 mb-4">
-                            {servers.map(server => (
-                                <button
-                                    key={server.id}
-                                    onClick={async () => {
-                                        if (selectedSeriesForSend && db) {
-                                            // Get file paths for series
-                                            const files = await db.images.find({ selector: { seriesInstanceUID: selectedSeriesForSend } }).exec();
-                                            const filePaths = files.map(f => f.filePath);
-                                            sendToPacs(server, filePaths);
-                                            setShowSendModal(false);
-                                        }
-                                    }}
-                                    className="w-full text-left px-3 py-2 text-xs text-gray-300 hover:bg-white/5 rounded-lg transition-colors flex justify-between items-center group"
-                                >
-                                    <span>{server.aeTitle}</span>
-                                    <span className="text-[9px] text-gray-500 group-hover:text-white/50">{server.address}:{server.port}</span>
-                                </button>
-                            ))}
-                        </div>
-                        <button
-                            onClick={() => setShowSendModal(false)}
-                            className="w-full py-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white text-xs rounded-lg transition-colors"
-                        >
-                            Cancel
-                        </button>
-                    </div>
-                </div>
-            )}
         </div>
     );
 };

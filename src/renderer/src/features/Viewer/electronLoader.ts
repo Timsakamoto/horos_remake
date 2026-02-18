@@ -126,7 +126,7 @@ function electronMetadataProvider(type: string, ...queries: any[]) {
             bitsStored: 32,
             highBit: 31,
             samplesPerPixel: 1,
-            photometricInterpretation: 'MONOCHROME2',
+            photometricInterpretation: mod.photometricInterpretation || 'MONOCHROME2',
             rows: mod.rows,
             columns: mod.columns,
             rescaleIntercept: 0,
@@ -495,23 +495,21 @@ export function loadElectronImage(imageId: string) {
                 let rawData;
 
                 // 1. 生データの読み込み (型を自動選択)
+                // bitsAllocatedは通常8, 12, 16
                 if (bitsAllocated <= 8) {
                     rawData = new Uint8Array(ab, finalOffset, numPixels);
                 } else if (pixelRepresentation === 1) {
-                    // 東芝などはここ (Signed raw data)
+                    // Signed
                     if (finalOffset % 2 === 0) rawData = new Int16Array(ab, finalOffset, numPixels);
                     else rawData = new Int16Array(uint8Array.slice(frameOffset, frameOffset + frameSize).buffer);
                 } else {
-                    // Philipsなどはここ (Unsigned raw data) - User Fix: Int16Array + Safe Length
+                    // Unsigned (CR/Philipsなど)
                     if (finalOffset % 2 === 0) {
                         const remainingBytes = ab.byteLength - finalOffset;
                         const safeLen = Math.min(numPixels, Math.floor(remainingBytes / 2));
-                        if (safeLen < numPixels) {
-                            console.warn(`[Loader] SHORT READ detected! Expected ${numPixels}, got ${safeLen}. TS=${orig.transferSyntax}, IsCompressed=${isCompressed}. Buffer=${ab.byteLength}, Offset=${finalOffset}`);
-                        }
-                        rawData = new Int16Array(ab, finalOffset, safeLen);
+                        rawData = new Uint16Array(ab, finalOffset, safeLen);
                     }
-                    else rawData = new Int16Array(uint8Array.slice(frameOffset, frameOffset + frameSize).buffer);
+                    else rawData = new Uint16Array(uint8Array.slice(frameOffset, frameOffset + frameSize).buffer);
                 }
 
                 // [DIAGNOSTIC] Metadata Check
@@ -599,7 +597,8 @@ export function loadElectronImage(imageId: string) {
                 sizeInBytes: float32Data.byteLength,
                 bitsAllocated: 32,
                 bitsStored: 32,
-                pixelRepresentation: 1,
+                pixelRepresentation: 1, // Scaled data is float, but Cornerstone uses this to check signed/unsigned
+                photometricInterpretation: meta.imagePixelModule.photometricInterpretation,
                 dataType: 'float32',
             };
 

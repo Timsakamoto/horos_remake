@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Server, Send, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { usePACS } from './PACSProvider';
 import { useDatabase } from '../Database/DatabaseProvider';
+import { useSettings } from '../Settings/SettingsContext';
 
 export const SendToPACSModal: React.FC = () => {
     const { servers, sendToPacs, activeJobs } = usePACS();
@@ -11,6 +12,7 @@ export const SendToPACSModal: React.FC = () => {
         showSendModal,
         db
     } = useDatabase();
+    const { databasePath } = useSettings();
 
     const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
     const [isSending, setIsSending] = useState(false);
@@ -92,11 +94,19 @@ export const SendToPACSModal: React.FC = () => {
                 selector: { seriesInstanceUID: { $in: Array.from(seriesUids) } }
             }).exec();
 
-            const paths = allFiles.map(f => f.filePath).filter(Boolean) as string[];
+            const rawPaths = allFiles.map(f => f.filePath).filter(Boolean) as string[];
 
-            if (paths.length === 0) {
+            if (rawPaths.length === 0) {
                 throw new Error('No DICOM files found for selected items.');
             }
+
+            // Resolve absolute paths for storescu
+            const paths = await Promise.all(rawPaths.map(async (p) => {
+                // Check if already absolute (Unix / or Windows drive)
+                if (p.startsWith('/') || /^[a-zA-Z]:/.test(p)) return p;
+                if (!databasePath) return p;
+                return window.electron.join(databasePath, p);
+            }));
 
             setStatus('sending');
             setProgress({ total: paths.length, sent: 0 });

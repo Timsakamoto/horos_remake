@@ -1,59 +1,17 @@
-import { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
-import { PACSClient, PACSServer, PACSStudy } from './pacsClient';
+import { useState, useEffect, ReactNode, useRef } from 'react';
+import { PACSClient } from './pacsClient';
 import { useDatabase } from '../Database/DatabaseProvider';
+import { useSettings } from '../Settings/SettingsContext';
 import { importMetadata } from '../Database/importService';
 import { parseDicombuffer } from '../../utils/dicomParser';
-
-interface LocalListenerSettings {
-    aeTitle: string;
-    port: number;
-    isRunning: boolean;
-}
-
-export interface PACSJob {
-    id: string;
-    type: 'C-MOVE' | 'C-FIND' | 'C-ECHO' | 'C-STORE';
-    status: 'pending' | 'active' | 'completed' | 'failed';
-    description: string;
-    progress: number;
-    details: string;
-    nodeName: string;
-    timestamp: number;
-    error?: string;
-}
-
-interface PACSContextType {
-    servers: (PACSServer & { status?: 'online' | 'offline' | 'checking' })[];
-    setServers: (servers: PACSServer[]) => void;
-    activeServer: PACSServer | null;
-    setActiveServer: (server: PACSServer) => void;
-    removeServer: (serverId: string) => void;
-
-    localListener: LocalListenerSettings;
-    setLocalListener: (settings: LocalListenerSettings) => void;
-    toggleListener: () => Promise<void>;
-
-    results: PACSStudy[];
-    isSearching: boolean;
-    search: (filters: any) => Promise<void>;
-    retrieve: (studyInstanceUID: string) => Promise<boolean>;
-    sendToPacs: (server: PACSServer, filePaths: string[]) => Promise<boolean>;
-    verifyNode: (server: PACSServer) => Promise<boolean>;
-
-    activeJobs: PACSJob[];
-    clearCompletedJobs: () => void;
-
-    // Advanced Settings
-    debugLoggingEnabled: boolean;
-    setDebugLogging: (enabled: boolean) => void;
-    openLogFile: () => void;
-    associationTimeout: number;
-    setAssociationTimeout: (seconds: number) => void;
-
-    error: string | null;
-}
-
-const PACSContext = createContext<PACSContextType | undefined>(undefined);
+import {
+    LocalListenerSettings,
+    PACSJob,
+    PACSServer,
+    PACSServerWithStatus,
+    PACSStudy
+} from './types';
+import { PACSContext } from './PACSContext';
 
 const DEFAULT_SERVERS: PACSServer[] = [
     {
@@ -77,13 +35,16 @@ const STORAGE_KEY_SERVERS = 'peregrine_pacs_servers';
 const STORAGE_KEY_LISTENER = 'peregrine_local_listener';
 
 export const PACSProvider = ({ children }: { children: ReactNode }) => {
+    const { db } = useDatabase();
+    const { databasePath, isLoaded: settingsLoaded } = useSettings();
+
     // initialize from local storage or default
-    const [servers, setServersState] = useState<PACSServer[]>(() => {
+    const [servers, setServersState] = useState<PACSServerWithStatus[]>(() => {
         const stored = localStorage.getItem(STORAGE_KEY_SERVERS);
         return stored ? JSON.parse(stored) : DEFAULT_SERVERS;
     });
 
-    const [activeServer, setActiveServer] = useState<PACSServer | null>(servers[0]);
+    const [activeServer, setActiveServer] = useState<PACSServer | null>(servers[0] || null);
 
     const [localListener, setLocalListenerState] = useState<LocalListenerSettings>(() => {
         const stored = localStorage.getItem(STORAGE_KEY_LISTENER);
@@ -102,7 +63,6 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
 
     const [error, setError] = useState<string | null>(null);
 
-    const { db } = useDatabase();
     const healthCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
     // Initial load of jobs
@@ -136,7 +96,7 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
                     const meta = parseDicombuffer(buffer);
                     if (meta) {
                         // Import metadata record by record (Progressive)
-                        await importMetadata(db, meta, data.filePath, buffer.byteLength);
+                        await importMetadata(db, meta, data.filePath, buffer.byteLength, databasePath);
                     }
                 }
             } catch (err) {
@@ -150,21 +110,29 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
         };
     }, [db]);
 
+    const isStartingRef = useRef(false);
+
     // Auto-start Listener on Boot
     useEffect(() => {
         const startOnBoot = async () => {
+            if (!settingsLoaded || databasePath === null || isStartingRef.current) return;
+
             // Wait a bit for Main process to be ready
             setTimeout(async () => {
-                if (localListener.isRunning) {
-                    const success = await window.electron.pacs.startListener(localListener.aeTitle, localListener.port);
-                    if (!success) {
-                        setLocalListenerState(prev => ({ ...prev, isRunning: false }));
-                    }
+                if (localListener.isRunning && !isStartingRef.current) {
+                    isStartingRef.current = true;
+                    console.log('PACSProvider: Auto-starting DICOM Listener on port', localListener.port);
+                    await window.electron.pacs.startListener(
+                        localListener.aeTitle.trim(),
+                        localListener.port,
+                        databasePath || undefined
+                    );
+                    isStartingRef.current = false;
                 }
-            }, 1000);
+            }, 500);
         };
         startOnBoot();
-    }, []);
+    }, [databasePath, settingsLoaded]); // Re-run when databasePath or settings are loaded
 
     // Health Monitoring (C-ECHO)
     useEffect(() => {
@@ -227,7 +195,7 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
                 setLocalListenerState(prev => ({ ...prev, isRunning: false }));
             }
         } else {
-            const success = await window.electron.pacs.startListener(localListener.aeTitle.trim(), localListener.port);
+            const success = await window.electron.pacs.startListener(localListener.aeTitle.trim(), localListener.port, databasePath || undefined);
             if (success) {
                 setLocalListenerState(prev => ({ ...prev, isRunning: true }));
             } else {
@@ -326,7 +294,7 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
             servers,
             setServers,
             activeServer,
-            setActiveServer,
+            setActiveServer: (s) => setActiveServer(s),
             removeServer,
             localListener,
             setLocalListener,
@@ -351,10 +319,4 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
     );
 };
 
-export const usePACS = () => {
-    const context = useContext(PACSContext);
-    if (!context) {
-        throw new Error('usePACS must be used within a PACSProvider');
-    }
-    return context;
-};
+export { usePACS } from './PACSContext';

@@ -156,6 +156,25 @@ const prepareMetadata = (meta: any, filePath: string, fileSize: number, managedD
         studyDescriptionNormalized: String(meta.studyDescription || '').toLowerCase()
     };
 
+    // --- Smart Windowing Logic ---
+    let wc = Number(meta.windowCenter);
+    let ww = Number(meta.windowWidth);
+
+    if (isNaN(wc) || isNaN(ww) || ww <= 0) {
+        // Fallback for missing/invalid window tags
+        if (meta.modality === 'CT') {
+            wc = 40; ww = 400; // Standard Soft Tissue
+        } else if (meta.modality === 'PT') {
+            wc = 0; ww = 32767; // Wide for SUV
+        } else {
+            // CR/DX/MR/US etc. - use bitsStored to estimate range
+            const bits = Number(meta.bitsStored) || 12;
+            const maxVal = Math.pow(2, bits) - 1;
+            ww = maxVal;
+            wc = maxVal / 2;
+        }
+    }
+
     const series = {
         seriesInstanceUID: String(meta.seriesInstanceUID),
         dicomSeriesInstanceUID: String(meta.seriesInstanceUID),
@@ -193,10 +212,11 @@ const prepareMetadata = (meta: any, filePath: string, fileSize: number, managedD
         triggerTime: meta.triggerTime,
 
         imagePositionPatient: meta.imagePositionPatient ? String(meta.imagePositionPatient).split(/\\+/).map(Number).filter(n => !isNaN(n)) : undefined,
-        windowCenter: Number(meta.windowCenter) || 40,
-        windowWidth: Number(meta.windowWidth) || 400,
+        windowCenter: wc,
+        windowWidth: ww,
         rescaleIntercept: Number(meta.rescaleIntercept) || 0,
-        rescaleSlope: Number(meta.rescaleSlope) || 1
+        rescaleSlope: Number(meta.rescaleSlope) || 1,
+        photometricInterpretation: String(meta.photometricInterpretation || 'MONOCHROME2')
     };
 
     return { patient, study, series, image };
@@ -347,12 +367,61 @@ export const importFiles = async (
     onProgress?.(100, 'Import Complete');
 };
 
-export const importMetadata = async (db: AntigravityDatabase, meta: any, filePath: string, fileSize: number) => {
-    const { patient, study, series, image } = prepareMetadata(meta, filePath, fileSize);
+/**
+ * Targeted count update for a specific study/series/patient
+ */
+export const updateTargetedCounts = async (db: AntigravityDatabase, studyInstanceUID: string) => {
+    const studyDoc = await db.studies.findOne(studyInstanceUID).exec();
+    if (!studyDoc) return;
+
+    const seriesDocs = await db.series.find({
+        selector: { studyInstanceUID }
+    }).exec();
+
+    let totalStudyInstances = 0;
+    for (const s of seriesDocs) {
+        const imageCount = await db.images.count({
+            selector: { seriesInstanceUID: s.seriesInstanceUID }
+        }).exec();
+
+        await s.incrementalPatch({ numberOfSeriesRelatedInstances: imageCount });
+        totalStudyInstances += imageCount;
+    }
+
+    const studyViewModalities = Array.from(new Set(seriesDocs.map(s => s.modality).filter(Boolean)));
+
+    await studyDoc.incrementalPatch({
+        numberOfStudyRelatedSeries: seriesDocs.length,
+        numberOfStudyRelatedInstances: totalStudyInstances,
+        modalitiesInStudy: studyViewModalities,
+        ImportDateTime: new Date().toISOString()
+    });
+
+    // Also update patient
+    const patientDoc = await db.patients.findOne(studyDoc.patientId).exec();
+    if (patientDoc) {
+        const allStudies = await db.studies.find({
+            selector: { patientId: patientDoc.id }
+        }).exec();
+
+        const totalPatientInstances = allStudies.reduce((acc, st) => acc + (st.numberOfStudyRelatedInstances || 0), 0);
+        await patientDoc.incrementalPatch({
+            numberOfPatientRelatedInstances: totalPatientInstances,
+            lastImportDateTime: new Date().toISOString()
+        });
+    }
+};
+
+export const importMetadata = async (db: AntigravityDatabase, meta: any, filePath: string, fileSize: number, managedDir?: string | null) => {
+    const { patient, study, series, image } = prepareMetadata(meta, filePath, fileSize, managedDir);
+
     await db.patients.upsert(patient);
     await db.studies.upsert(study);
     await db.series.upsert(series);
     await db.images.upsert(image);
+
+    // Update counts and timestamps to ensure UI reflects the new/updated data
+    await updateTargetedCounts(db, study.studyInstanceUID);
 };
 
 export const importStudyFromPACS = async (db: AntigravityDatabase, server: PACSServer, studyInstanceUID: string, _onProgress?: (msg: string) => void) => {

@@ -23,7 +23,7 @@ export interface StudyDocType {
 }
 
 export const StudySchema: RxJsonSchema<StudyDocType> = {
-    version: 9,
+    version: 10,
     primaryKey: 'studyInstanceUID',
     type: 'object',
     properties: {
@@ -43,7 +43,8 @@ export const StudySchema: RxJsonSchema<StudyDocType> = {
             maxLength: 100
         },
         studyDescription: {
-            type: 'string'
+            type: 'string',
+            maxLength: 200
         },
         studyID: {
             type: 'string'
@@ -100,5 +101,5 @@ export const StudySchema: RxJsonSchema<StudyDocType> = {
         }
     },
     required: ['studyInstanceUID', 'patientId'],
-    indexes: ['patientId', 'studyDate', 'ImportDateTime', 'studyDescriptionNormalized', 'userComments', 'accessionNumber', 'institutionName', 'numberOfStudyRelatedInstances']
+    indexes: ['patientId', 'studyDate', 'ImportDateTime', 'studyDescription', 'studyDescriptionNormalized', 'userComments', 'accessionNumber', 'institutionName', 'numberOfStudyRelatedInstances']
 };

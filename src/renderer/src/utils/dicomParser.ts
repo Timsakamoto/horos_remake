@@ -33,6 +33,7 @@ export interface DicomMetadata {
     windowWidth: number;
     rescaleIntercept: number;
     rescaleSlope: number;
+    photometricInterpretation: string;
     // Geometry
     imagePositionPatient: string;
     imageOrientationPatient: string;
@@ -255,6 +256,7 @@ export const parseDicombuffer = (buffer: ArrayBuffer | Uint8Array): DicomMetadat
                 windowWidth: safeNumber(get('WindowWidth'), 400),
                 rescaleIntercept: safeNumber(get('RescaleIntercept'), 0),
                 rescaleSlope: safeNumber(get('RescaleSlope'), 1),
+                photometricInterpretation: safeString(get('PhotometricInterpretation'), 'MONOCHROME2'),
 
                 // Geometry
                 imagePositionPatient: safeString(get('ImagePositionPatient')),
@@ -437,6 +439,7 @@ const parseWithDicomParser = (buffer: ArrayBuffer | Uint8Array): DicomMetadata |
             windowWidth: getNumber('x00281051') || 400,
             rescaleIntercept: getNumber('x00281052') || 0,
             rescaleSlope: getNumber('x00281053') || 1,
+            photometricInterpretation: getString('x00280004') || 'MONOCHROME2',
 
             // Geometry
             imagePositionPatient: getString('x00200032') || '',
