@@ -15,7 +15,12 @@ interface Props {
     initialImageId?: string | null;
     isThumbnail?: boolean;
     activeTool?: ToolMode;
-    activeCLUT?: string;
+    activeLUT?: string;
+    projectionMode?: string;
+    fusionSeriesUid?: string | null;
+    fusionOpacity?: number;
+    fusionLUT?: string;
+    fusionVOI?: VOI | null;
     isSynced?: boolean;
     isCinePlaying?: boolean;
     showOverlays?: boolean;
@@ -34,6 +39,12 @@ export const Viewport = ({
     seriesUid,
     initialImageId = null,
     isThumbnail = false,
+    activeLUT,
+    fusionSeriesUid,
+    fusionOpacity,
+    fusionLUT,
+    fusionVOI,
+    projectionMode,
     isSynced = false,
     isCinePlaying = false,
     showOverlays = true,
@@ -62,7 +73,12 @@ export const Viewport = ({
         initialImageId,
         voiOverride,
         onVoiChange,
-        activeCLUT: undefined, // Internal state handles this
+        activeLUT,
+        fusionSeriesUid,
+        fusionOpacity,
+        fusionLUT,
+        fusionVOI,
+        projectionMode,
         autoFit: true,
         initialWindowWidth,
         initialWindowCenter,
@@ -130,7 +146,7 @@ export const Viewport = ({
 
     // Mac Scroll Optimization (Magic Mouse / Trackpad)
     useEffect(() => {
-        if (!element || isThumbnail || !isReady) return;
+        if (!element || isThumbnail || !isComposed) return;
 
         let accumulatedDelta = 0;
         const THRESHOLD = 12; // Adjusted for Magic Mouse / Trackpad smoothness

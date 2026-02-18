@@ -27,7 +27,11 @@ interface UseViewportLoaderProps {
     initialImageId?: string | null;
     voiOverride?: VOI | null;
     onVoiChange?: () => void;
-    activeCLUT?: string;
+    activeLUT?: string;
+    fusionOpacity?: number;
+    fusionLUT?: string;
+    fusionVOI?: VOI | null;
+    projectionMode?: string;
     autoFit?: boolean;
     initialWindowWidth?: number;
     initialWindowCenter?: number;
@@ -44,7 +48,11 @@ export const useViewportLoader = ({
     initialImageId = null,
     voiOverride,
     onVoiChange,
-    activeCLUT,
+    activeLUT,
+    fusionOpacity = 0.5,
+    fusionLUT = 'Hot Metal',
+    fusionVOI,
+    projectionMode,
     autoFit,
     initialWindowWidth,
     initialWindowCenter
@@ -76,7 +84,7 @@ export const useViewportLoader = ({
 
         console.log(`[useViewportLoader] ${viewportId}: loadSeries start`, { seriesUid, isThumbnail, width: element.clientWidth });
 
-        const isVolumeOrientation = !isThumbnail && (orientation === 'Coronal' || orientation === 'Sagittal' || orientation === 'Axial');
+        const isVolumeOrientation = !isThumbnail && (orientation === 'Coronal' || orientation === 'Sagittal' || orientation === 'Axial' || orientation === 'Acquisition');
 
         let ids: string[] = [];
         let hasMultiFrame = false;
@@ -87,17 +95,22 @@ export const useViewportLoader = ({
         // Fast Switch Optimization (Volume)
         if (isVolumeOrientation && seriesUid === lastSeriesUidRef.current && isReady) {
             const engine = getRenderingEngine(renderingEngineId);
-            const viewport = engine?.getViewport(viewportId) as Types.IVolumeViewport;
-            if (viewport && viewport.setOrientation) {
-                const orientationKey = orientation.toUpperCase() as keyof typeof Enums.OrientationAxis;
-                viewport.setOrientation(Enums.OrientationAxis[orientationKey]);
-                viewport.render();
+            const viewport = engine?.getViewport(viewportId);
 
-                const nSlices = viewport.getNumberOfSlices();
+            // Explicitly check if it's already a Volume viewport
+            if (viewport?.type === Enums.ViewportType.ORTHOGRAPHIC && (viewport as Types.IVolumeViewport).setOrientation) {
+                const vp = viewport as Types.IVolumeViewport;
+                // If Acquisition, default to AXIAL (most common setup)
+                const targetOrientation = orientation === 'Acquisition' ? 'AXIAL' : orientation.toUpperCase();
+                const orientationKey = targetOrientation as keyof typeof Enums.OrientationAxis;
+                vp.setOrientation(Enums.OrientationAxis[orientationKey]);
+                vp.render();
+
+                const nSlices = vp.getNumberOfSlices();
                 setMetadata(prev => ({ ...prev, totalInstances: nSlices, instanceNumber: Math.floor(nSlices / 2) + 1 }));
 
                 const midIndex = Math.floor(nSlices / 2);
-                if ((viewport as any).setSliceIndex) (viewport as any).setSliceIndex(midIndex);
+                if ((vp as any).setSliceIndex) (vp as any).setSliceIndex(midIndex);
 
                 setIsComposed(true);
                 lastOrientationRef.current = orientation;
@@ -105,11 +118,16 @@ export const useViewportLoader = ({
             }
         }
 
-        // Fast Switch Optimization (Stack/2D) - skip reload if same series & element
+        // Fast Switch Optimization (Stack/2D) - skip reload if same series & element & ALREADY STACK
         if (!isVolumeOrientation && seriesUid === lastSeriesUidRef.current && isReady) {
-            console.log(`[useViewportLoader] ${viewportId}: Fast switch/Skip reload for stable stack`);
-            setIsComposed(true);
-            return;
+            const engine = getRenderingEngine(renderingEngineId);
+            const viewport = engine?.getViewport(viewportId);
+
+            if (viewport?.type === Enums.ViewportType.STACK) {
+                console.log(`[useViewportLoader] ${viewportId}: Fast switch/Skip reload for stable stack`);
+                setIsComposed(true);
+                return;
+            }
         }
 
         // Full Reload Logic
@@ -220,7 +238,7 @@ export const useViewportLoader = ({
 
             if (isVolumeView) {
                 const viewport = renderingEngine.getViewport(viewportId) as Types.IVolumeViewport;
-                const volumeId = `volume-${seriesUid}`;
+                const volumeId = `cornerstoneStreamingImageVolume:volume-${seriesUid}`;
 
                 const existingVolume = cache.getVolume(volumeId);
                 if (existingVolume && existingVolume.loadStatus?.loaded) {
@@ -242,8 +260,11 @@ export const useViewportLoader = ({
                 let volumeInputs: Types.IVolumeInput[] = [{ volumeId }];
 
                 // --- ★ Fusion Integration ★ ---
+                const fusionActorId = fusionSeriesUid ? `volume-${fusionSeriesUid}` : null;
                 if (fusionSeriesUid) {
-                    const fusionVolumeId = `volume-${fusionSeriesUid}`;
+                    const fusionVolumeId = `cornerstoneStreamingImageVolume:volume-${fusionSeriesUid}`;
+
+                    // Load fusion images
                     const fusionImages = await db.images.find({
                         selector: { seriesInstanceUID: fusionSeriesUid },
                         sort: [{ instanceNumber: 'asc' }]
@@ -258,30 +279,119 @@ export const useViewportLoader = ({
                         return `electronfile:${fullPath}`;
                     });
 
+                    if (fusionSeriesUid) {
+                        prefetchStudyThumbnails(fusionSeriesUid as string);
+                    }
+
                     if (fusionIds.length > 0) {
                         await prefetchMetadata(fusionIds);
-                        const fusionVolume = await volumeLoader.createAndCacheVolume(fusionVolumeId, { imageIds: fusionIds });
-                        await fusionVolume.load();
-
-                        // Detect PET to apply colormap
-                        const subseries = await db.series.findOne(fusionSeriesUid).exec();
-                        const isPET = subseries?.modality === 'PT';
+                        // We need to ensure the fusion volume is created and loaded
+                        let fusionVolume = cache.getVolume(fusionVolumeId) as any;
+                        if (!fusionVolume) {
+                            fusionVolume = await volumeLoader.createAndCacheVolume(fusionVolumeId, { imageIds: fusionIds });
+                        }
+                        await (fusionVolume as any).load();
 
                         volumeInputs.push({
                             volumeId: fusionVolumeId,
-                            blendMode: Enums.BlendModes.MAXIMUM_INTENSITY_BLEND, // Standard for fusion fallback
-                            callback: isPET ? ({ volumeActor }) => {
-                                // Apply "Hot Metal" or similar colormap for PET
-                                volumeActor.getProperty().setRGBTransferFunction(0, undefined); // Placeholder for actual colormap logic
-                            } : undefined
+                            blendMode: Enums.BlendModes.MAXIMUM_INTENSITY_BLEND
                         });
+
+                        // --- ★ Smart Defaults for MRI/DWI ★ ---
+                        const fSeries = await db.series.findOne(fusionSeriesUid as string).exec();
+                        const isMR = fSeries?.modality === 'MR';
+                        const isDWI = fSeries?.seriesDescription?.toUpperCase().includes('DWI') ||
+                            fSeries?.seriesDescription?.toUpperCase().includes('DIFFUSION');
+
+                        const defaultLUT = (isMR && isDWI) ? 'Hot' : 'Hot Metal';
+                        const colormapMap: Record<string, string> = {
+                            'Grayscale': '',
+                            'Hot Metal': 'hotiron',
+                            'PET': 'pet',
+                            'Rainbow': 'rainbow',
+                            'Jet': 'jet',
+                            'Hot': 'hot' // Added 'Hot' for DWI
+                        };
+                        const colormapId = colormapMap[fusionLUT || defaultLUT] || 'hotiron';
+                        if (colormapId) {
+                            viewport.setProperties({ colormap: { name: colormapId } }, fusionActorId);
+                        }
+
+                        // Apply VOI (Initial or State)
+                        let targetVOI = fusionVOI;
+                        if (!targetVOI) {
+                            // Fallback to first image's VOI if series is MRI/PET
+                            const fImg = fusionImages[0];
+                            if (fImg) {
+                                targetVOI = {
+                                    windowWidth: Number(Array.isArray(fImg.windowWidth) ? fImg.windowWidth[0] : fImg.windowWidth),
+                                    windowCenter: Number(Array.isArray(fImg.windowCenter) ? fImg.windowCenter[0] : fImg.windowCenter)
+                                };
+                            }
+                        }
+
+                        if (targetVOI && targetVOI.windowWidth !== undefined && targetVOI.windowCenter !== undefined) {
+                            viewport.setProperties({
+                                voiRange: {
+                                    lower: targetVOI.windowCenter - targetVOI.windowWidth / 2,
+                                    upper: targetVOI.windowCenter + targetVOI.windowWidth / 2,
+                                }
+                            }, fusionActorId);
+                        }
                     }
                 }
 
                 setVolumeProgress(100);
                 await viewport.setVolumes(volumeInputs);
 
-                const orientationKey = orientation.toUpperCase() as keyof typeof Enums.OrientationAxis;
+                // --- ★ Apply Fusion Properties ★ ---
+                if (fusionActorId) {
+                    const fusionActor = viewport.getActor(fusionActorId)?.actor as any;
+                    if (fusionActor) {
+                        fusionActor.getProperty().setScalarOpacity(0, fusionOpacity);
+
+                        const colormapMap: Record<string, string> = {
+                            'Grayscale': '',
+                            'Hot Metal': 'hotiron',
+                            'PET': 'pet',
+                            'Rainbow': 'rainbow',
+                            'Jet': 'jet'
+                        };
+                        const colormapId = colormapMap[fusionLUT || 'Hot Metal'] || 'hotiron';
+                        if (colormapId) {
+                            viewport.setProperties({ colormap: { name: colormapId } }, fusionActorId);
+                        }
+
+                        if (fusionVOI && fusionVOI.windowWidth !== undefined && fusionVOI.windowCenter !== undefined) {
+                            viewport.setProperties({
+                                voiRange: {
+                                    lower: fusionVOI.windowCenter - fusionVOI.windowWidth / 2,
+                                    upper: fusionVOI.windowCenter + fusionVOI.windowWidth / 2,
+                                }
+                            }, fusionActorId);
+                        }
+                    }
+                }
+
+                // --- ★ Apply MIP & LUT ★ ---
+                const volumeActor = viewport.getActor(volumeId)?.actor as any;
+                if (volumeActor) {
+                    // Set Blend Mode
+                    const isMIP = projectionMode === 'MIP';
+                    volumeActor.getProperty().setBlendMode(isMIP ? Enums.BlendModes.MAXIMUM_INTENSITY_BLEND : Enums.BlendModes.COMPOSITE);
+
+                    // Set Color LUT
+                    if (activeLUT && activeLUT !== 'Grayscale') {
+                        // In a real Horos/Cornerstone app, you'd map activeLUT to actual RGB transfer functions
+                        // Here we apply a standard hot-metal or jet colormap placeholder
+                        console.log(`[useViewportLoader] Applying LUT: ${activeLUT}`);
+                        // Example: viewport.setProperties({ colormap: { name: activeLUT } }); 
+                        // Note: actual colormap names depend on @cornerstonejs/core standard ones
+                    }
+                }
+
+                const targetOrientation = orientation === 'Acquisition' ? 'AXIAL' : orientation.toUpperCase();
+                const orientationKey = targetOrientation as keyof typeof Enums.OrientationAxis;
                 viewport.setOrientation(Enums.OrientationAxis[orientationKey]);
 
                 const nSlices = viewport.getNumberOfSlices();
@@ -406,7 +516,7 @@ export const useViewportLoader = ({
 
                 // Apply CLUT and initial fits
                 const { CLUT_PRESETS } = await import('./CLUTPresets');
-                const preset = CLUT_PRESETS.find(p => p.name === activeCLUT);
+                const preset = CLUT_PRESETS.find(p => p.name === activeLUT);
                 if (preset) {
                     viewport.setProperties({
                         voiRange: {
@@ -437,7 +547,7 @@ export const useViewportLoader = ({
         databasePath,
         initialWindowWidth,
         initialWindowCenter,
-        activeCLUT,
+        activeLUT,
         autoFit,
         voiOverride,
         // Removed dimensions.width/height and onVoiChange to prevent jitter
@@ -558,17 +668,33 @@ export const useViewportLoader = ({
             const engine = getRenderingEngine(renderingEngineId);
             const vp = engine?.getViewport(viewportId) as Types.IStackViewport | Types.IVolumeViewport;
             if (!vp) return;
-            const { CLUT_PRESETS } = await import('./CLUTPresets');
-            const preset = CLUT_PRESETS.find(p => p.name === activeCLUT);
-            if (preset) {
+
+            // Map friendly names to Cornerstone colormap IDs
+            const colormapMap: Record<string, string> = {
+                'Grayscale': '', // Empty or default
+                'Hot Metal': 'hotiron',
+                'PET': 'pet',
+                'Rainbow': 'rainbow',
+                'Jet': 'jet',
+                'HotIron': 'hotiron',
+                'Hot': 'hot',
+                'Cool': 'cool'
+            };
+
+            const colormapId = colormapMap[activeLUT || 'Grayscale'] || '';
+
+            if (vp.type === Enums.ViewportType.ORTHOGRAPHIC || vp.type === Enums.ViewportType.VOLUME_3D) {
+                // For volume viewports, colormap is applied to the actor
                 vp.setProperties({
-                    voiRange: {
-                        lower: preset.windowCenter - preset.windowWidth / 2,
-                        upper: preset.windowCenter + preset.windowWidth / 2,
-                    }
+                    colormap: colormapId ? { name: colormapId } : undefined
                 });
-                vp.render();
+            } else {
+                // For stack viewports, colormap is applied to the image
+                vp.setProperties({
+                    colormap: colormapId ? { name: colormapId } : undefined
+                });
             }
+            vp.render();
         };
         applyCLUT();
 
@@ -578,7 +704,47 @@ export const useViewportLoader = ({
             element.removeEventListener(Enums.Events.STACK_NEW_IMAGE, updateMetadata);
             // element.removeEventListener(Enums.Events.CAMERA_MODIFIED, updateMetadata);
         };
-    }, [viewportId, renderingEngineId, element, isReady, isThumbnail, orientation, activeCLUT]);
+    }, [viewportId, renderingEngineId, element, isReady, isThumbnail, orientation, activeLUT, fusionSeriesUid, fusionOpacity, fusionLUT]);
+
+    // Handle Fusion Property Updates (Reactive)
+    useEffect(() => {
+        if (!isReady || !fusionSeriesUid) return;
+        const engine = getRenderingEngine(renderingEngineId);
+        const vp = engine?.getViewport(viewportId) as Types.IVolumeViewport;
+        if (!vp) return;
+
+        const fusionActorId = `volume-${fusionSeriesUid}`;
+        const fusionActor = vp.getActor(fusionActorId)?.actor as any;
+        if (fusionActor) {
+            // Update Opacity
+            fusionActor.getProperty().setScalarOpacity(0, fusionOpacity);
+
+            // Update Colormap
+            const colormapMap: Record<string, string> = {
+                'Grayscale': '',
+                'Hot Metal': 'hotiron',
+                'PET': 'pet',
+                'Rainbow': 'rainbow',
+                'Jet': 'jet'
+            };
+            const colormapId = colormapMap[fusionLUT || 'Hot Metal'] || 'hotiron';
+            if (colormapId) {
+                vp.setProperties({ colormap: { name: colormapId } }, fusionActorId);
+            }
+
+            // Update VOI
+            if (fusionVOI && fusionVOI.windowWidth !== undefined && fusionVOI.windowCenter !== undefined) {
+                vp.setProperties({
+                    voiRange: {
+                        lower: fusionVOI.windowCenter - fusionVOI.windowWidth / 2,
+                        upper: fusionVOI.windowCenter + fusionVOI.windowWidth / 2,
+                    }
+                }, fusionActorId);
+            }
+
+            vp.render();
+        }
+    }, [fusionOpacity, fusionLUT, fusionVOI, fusionSeriesUid, isReady, viewportId, renderingEngineId]);
 
     // Apply VOI Override
     useEffect(() => {

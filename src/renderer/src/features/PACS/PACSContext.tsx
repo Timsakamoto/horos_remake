@@ -21,6 +21,8 @@ export interface PACSContextType {
 
     activeJobs: PACSJob[];
     clearCompletedJobs: () => void;
+    showActivityManager: boolean;
+    setShowActivityManager: (show: boolean) => void;
 
     debugLoggingEnabled: boolean;
     setDebugLogging: (enabled: boolean) => void;

@@ -135,7 +135,7 @@ export const VRView = ({
                 return `electronfile:${targetPath}`;
             }));
 
-            const volumeId = `cornerstoneStreamingImageVolume:${seriesUid}`;
+            const volumeId = `cornerstoneStreamingImageVolume:volume-${seriesUid}`;
 
             await initCornerstone();
 
@@ -320,7 +320,7 @@ export const VRView = ({
 
         // Apply a simple clipping plane based on the volume's bounds and the clippingRange (%)
         // Scaling clippingRange (0-100) to the volume depth
-        const volumeId = `cornerstoneStreamingImageVolume:${seriesUid}`;
+        const volumeId = `cornerstoneStreamingImageVolume:volume-${seriesUid}`;
         const actor = viewport.getActor(volumeId);
         if (!actor) return;
 

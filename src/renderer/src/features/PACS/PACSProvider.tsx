@@ -62,6 +62,7 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
     });
 
     const [error, setError] = useState<string | null>(null);
+    const [showActivityManager, setShowActivityManager] = useState(false);
 
     const healthCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -297,7 +298,7 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
             setActiveServer: (s) => setActiveServer(s),
             removeServer,
             localListener,
-            setLocalListener,
+            setLocalListener: (s) => setLocalListener(s),
             toggleListener,
             results,
             isSearching,
@@ -307,6 +308,8 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
             verifyNode,
             activeJobs,
             clearCompletedJobs,
+            showActivityManager,
+            setShowActivityManager,
             debugLoggingEnabled,
             setDebugLogging,
             openLogFile,

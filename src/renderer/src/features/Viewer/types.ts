@@ -18,8 +18,9 @@ export type ToolMode =
     | 'None'
     | 'StackScroll';
 export type ToolbarMode = 'DATABASE' | 'VIEWER';
-export type ProjectionMode = 'NORMAL' | 'MIP' | 'MINIP';
-export type ViewportOrientation = 'Axial' | 'Coronal' | 'Sagittal' | 'Default';
+export type ProjectionMode = 'MIP' | 'NORMAL';
+export type ViewportOrientation = 'Axial' | 'Coronal' | 'Sagittal' | 'Acquisition' | 'Default';
+export type ActiveLUT = 'Grayscale' | 'Hot Metal' | 'PET' | 'Rainbow' | 'Flow' | 'Jet';
 
 export interface VOI {
     windowWidth?: number;
@@ -31,6 +32,12 @@ export interface ViewportState {
     seriesUid: string | null;
     orientation: ViewportOrientation;
     voi: VOI | null;
+    projectionMode: ProjectionMode;
+    activeLUT: ActiveLUT;
+    fusionSeriesUid?: string | null;
+    fusionOpacity?: number;
+    fusionLUT?: ActiveLUT;
+    fusionVOI?: VOI | null;
 }
 
 export interface Layout {

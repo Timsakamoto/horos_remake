@@ -15,12 +15,14 @@ import { PACSProvider, usePACS } from './features/PACS/PACSProvider';
 import { ViewerProvider, useViewer } from './features/Viewer/ViewerContext';
 import { CornerstoneManager } from './features/Viewer/CornerstoneManager';
 import { SendToPACSModal } from './features/PACS/SendToPACSModal';
-import { VOI, ViewportOrientation, ToolbarMode } from './features/Viewer/types';
+import { ToolbarMode, ViewportState, ActiveLUT } from './features/Viewer/types';
+import { ActivityManager } from './features/PACS/ActivityManager';
+import { AnnotationList } from './features/Viewer/AnnotationList';
 
 const AppContent = () => {
     const { patients, importPaths, handleImport, db, smartFolders, activeSmartFolderId, applySmartFolder, saveSmartFolder, prefetchStudyThumbnails } = useDatabase();
     const { setShowSettings, viewMode: settingsViewMode } = useSettings();
-    const { servers, activeServer, setActiveServer } = usePACS();
+    const { servers, activeServer, setActiveServer, showActivityManager, setShowActivityManager } = usePACS();
 
     const {
         activeView, handleViewChange,
@@ -31,14 +33,17 @@ const AppContent = () => {
         projectionMode, setProjectionMode,
         slabThickness, setSlabThickness,
         isCinePlaying, toggleCinePlaying,
-        activeCLUT, setActiveCLUT,
         isSynced, toggleIsSynced,
         isClipping, setIsClipping,
         clippingRange, setClippingRange,
         isAutoRotating, setIsAutoRotating,
         showOverlays, setShowOverlays,
         isInitReady,
-        onSeriesSelect
+        showAnnotationList, setShowAnnotationList,
+        onSeriesSelect,
+        setViewportFusionOpacity,
+        setViewportFusionLUT,
+        setViewportFusionVOI
     } = useViewer();
 
     const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
@@ -340,11 +345,13 @@ const AppContent = () => {
             if (newCols > 4) newCols = 4;
             if (newRows > 3) newRows = 3;
 
-            const nextViewports = new Array(12).fill(null).map((_, i) => ({
+            const nextViewports: ViewportState[] = new Array(12).fill(null).map((_, i) => ({
                 id: `vp-${i}`,
-                seriesUid: null as string | null,
-                orientation: 'Default' as ViewportOrientation,
-                voi: null as VOI | null
+                seriesUid: null,
+                orientation: 'Default',
+                voi: null,
+                projectionMode: 'NORMAL',
+                activeLUT: 'Grayscale'
             }));
 
             for (let r = 0; r < rows; r++) {
@@ -372,11 +379,18 @@ const AppContent = () => {
 
             const newSeriesIdx = insertIndices.r * newCols + insertIndices.c;
             if (newSeriesIdx < 12 && newSeriesIdx >= 0) {
-                nextViewports[newSeriesIdx] = { id: `vp-${newSeriesIdx}`, seriesUid, orientation: 'Default', voi: null };
+                nextViewports[newSeriesIdx] = {
+                    id: `vp-${newSeriesIdx}`,
+                    seriesUid,
+                    orientation: 'Default',
+                    voi: null,
+                    projectionMode: 'NORMAL',
+                    activeLUT: 'Grayscale'
+                };
             }
 
             handleLayoutChange(newRows, newCols);
-            setViewports(nextViewports);
+            setViewports(nextViewports as ViewportState[]);
             setActiveViewportIndex(newSeriesIdx);
 
         } catch (err) {
@@ -493,8 +507,15 @@ const AppContent = () => {
                 onSlabThicknessChange={setSlabThickness}
                 isCinePlaying={isCinePlaying}
                 onCineToggle={toggleCinePlaying}
-                activeCLUT={activeCLUT}
-                onCLUTChange={setActiveCLUT}
+                onLUTChange={(lut) => {
+                    setViewports(prev => {
+                        const next = [...prev];
+                        if (next[activeViewportIndex]) {
+                            next[activeViewportIndex] = { ...next[activeViewportIndex], activeLUT: lut as ActiveLUT };
+                        }
+                        return next;
+                    });
+                }}
                 isSynced={isSynced}
                 onSyncToggle={toggleIsSynced}
                 onOpenSettings={onOpenSettings}
@@ -513,6 +534,8 @@ const AppContent = () => {
                 showOverlays={showOverlays}
                 onToggleOverlays={() => setShowOverlays(prev => !prev)}
                 activeViewportOrientation={viewports[activeViewportIndex]?.orientation || 'Default'}
+                showActivityManager={showActivityManager}
+                onToggleActivityManager={() => setShowActivityManager(!showActivityManager)}
                 onPresetSelect={(preset) => {
                     setViewports(prev => {
                         const next = [...prev];
@@ -523,6 +546,15 @@ const AppContent = () => {
                         return next;
                     });
                 }}
+                fusionSeriesUid={viewports[activeViewportIndex]?.fusionSeriesUid}
+                fusionOpacity={viewports[activeViewportIndex]?.fusionOpacity}
+                onFusionOpacityChange={(opacity) => setViewportFusionOpacity(activeViewportIndex, opacity)}
+                fusionLUT={viewports[activeViewportIndex]?.fusionLUT}
+                onFusionLUTChange={(lut) => setViewportFusionLUT(activeViewportIndex, lut as ActiveLUT)}
+                fusionVOI={viewports[activeViewportIndex]?.fusionVOI}
+                onFusionVOIChange={(voi) => setViewportFusionVOI(activeViewportIndex, voi)}
+                showAnnotationList={showAnnotationList}
+                onToggleAnnotationList={() => setShowAnnotationList(!showAnnotationList)}
             />
 
             <div className="flex flex-1 overflow-hidden relative">
@@ -720,11 +752,17 @@ const AppContent = () => {
                                             )}
 
                                             <Viewport
-                                                key={`${vp.id}-${activeView}-${vp.orientation}`}
+                                                key={`${vp.id}-${activeView}-${vp.orientation}-${vp.projectionMode}-${vp.activeLUT}`}
                                                 viewportId={vp.id}
                                                 renderingEngineId="peregrine-engine"
                                                 seriesUid={vp.seriesUid}
                                                 activeTool={activeTool}
+                                                activeLUT={vp.activeLUT}
+                                                fusionSeriesUid={vp.fusionSeriesUid}
+                                                fusionOpacity={vp.fusionOpacity}
+                                                fusionLUT={vp.fusionLUT}
+                                                fusionVOI={vp.fusionVOI}
+                                                projectionMode={vp.projectionMode}
                                                 isSynced={isSynced && vp.orientation === 'Default'} // Disable sync if re-oriented (MPR display unlinked)
                                                 isCinePlaying={isCinePlaying}
                                                 isActive={activeViewportIndex === index}
@@ -769,12 +807,23 @@ const AppContent = () => {
                                 </div>
                             )}
                         </div>
+
+                        {/* Right Annotation Side Panel */}
+                        {showAnnotationList && (
+                            <div className="w-80 flex-shrink-0">
+                                <AnnotationList />
+                            </div>
+                        )}
                     </div>
                 )
                 }
             </div >
             <SettingsDialog />
             <SendToPACSModal />
+            <ActivityManager
+                isOpen={showActivityManager}
+                onClose={() => setShowActivityManager(false)}
+            />
         </div >
     );
 };

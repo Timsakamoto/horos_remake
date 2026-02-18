@@ -212,6 +212,8 @@ const prepareMetadata = (meta: any, filePath: string, fileSize: number, managedD
         triggerTime: meta.triggerTime,
 
         imagePositionPatient: meta.imagePositionPatient ? String(meta.imagePositionPatient).split(/\\+/).map(Number).filter(n => !isNaN(n)) : undefined,
+        imageOrientationPatient: meta.imageOrientationPatient ? String(meta.imageOrientationPatient).split(/\\+/).map(Number).filter(n => !isNaN(n)) : undefined,
+        pixelSpacing: meta.pixelSpacing ? String(meta.pixelSpacing).split(/\\+/).map(Number).filter(n => !isNaN(n)) : undefined,
         windowCenter: wc,
         windowWidth: ww,
         rescaleIntercept: Number(meta.rescaleIntercept) || 0,

@@ -5,6 +5,10 @@ export const SYNC_GROUP_ID = 'stack-sync-group';
 export const REF_LINE_SYNC_ID = 'reference-line-sync-group';
 export const REF_LINE_STACK_SYNC_ID = 'reference-line-stack-sync-group';
 
+export const ZOOM_SYNC_ID = 'zoom-sync-group';
+export const PAN_SYNC_ID = 'pan-sync-group';
+export const VOI_SYNC_ID = 'voi-sync-group';
+
 const getActualViewport = (viewportRef: any) => {
     if (!viewportRef) return null;
     if (viewportRef.element) return viewportRef; // Already a viewport instance
@@ -172,7 +176,108 @@ export const createSynchronizers = () => {
         );
     }
 
-    return { stackSync, refLineSync, refLineStackSync };
+    // 4. Zoom & Pan Synchronizers (Camera)
+    let zoomSync = SynchronizerManager.getSynchronizer(ZOOM_SYNC_ID);
+    if (!zoomSync) {
+        zoomSync = SynchronizerManager.createSynchronizer(
+            ZOOM_SYNC_ID,
+            Enums.Events.CAMERA_MODIFIED,
+            (_sync, sourceRef, targetRef) => {
+                const sourceVP = getActualViewport(sourceRef);
+                const targetVP = getActualViewport(targetRef);
+                if (!sourceVP || !targetVP || sourceVP.id === targetVP.id) return;
+
+                const sourceEnabled = sourceVP.element.getAttribute('data-sync-enabled') !== 'false';
+                const targetEnabled = targetVP.element.getAttribute('data-sync-enabled') !== 'false';
+                if (!sourceEnabled || !targetEnabled) return;
+
+                const sourceCamera = sourceVP.getCamera();
+
+                targetVP.setCamera({
+                    parallelScale: sourceCamera.parallelScale
+                });
+
+                if (!(targetVP as any)._pendingSyncRender) {
+                    (targetVP as any)._pendingSyncRender = true;
+                    requestAnimationFrame(() => {
+                        targetVP.render();
+                        (targetVP as any)._pendingSyncRender = false;
+                    });
+                }
+            }
+        );
+    }
+
+    let panSync = SynchronizerManager.getSynchronizer(PAN_SYNC_ID);
+    if (!panSync) {
+        panSync = SynchronizerManager.createSynchronizer(
+            PAN_SYNC_ID,
+            Enums.Events.CAMERA_MODIFIED,
+            (_sync, sourceRef, targetRef) => {
+                const sourceVP = getActualViewport(sourceRef);
+                const targetVP = getActualViewport(targetRef);
+                if (!sourceVP || !targetVP || sourceVP.id === targetVP.id) return;
+
+                const sourceEnabled = sourceVP.element.getAttribute('data-sync-enabled') !== 'false';
+                const targetEnabled = targetVP.element.getAttribute('data-sync-enabled') !== 'false';
+                if (!sourceEnabled || !targetEnabled) return;
+
+                const sourceCamera = sourceVP.getCamera();
+                targetVP.setCamera({
+                    focalPoint: sourceCamera.focalPoint,
+                    viewPlaneNormal: sourceCamera.viewPlaneNormal
+                });
+
+                if (!(targetVP as any)._pendingSyncRender) {
+                    (targetVP as any)._pendingSyncRender = true;
+                    requestAnimationFrame(() => {
+                        targetVP.render();
+                        (targetVP as any)._pendingSyncRender = false;
+                    });
+                }
+            }
+        );
+    }
+
+    // 5. VOI Synchronizer (Window/Level)
+    let voiSync = SynchronizerManager.getSynchronizer(VOI_SYNC_ID);
+    if (!voiSync) {
+        voiSync = SynchronizerManager.createSynchronizer(
+            VOI_SYNC_ID,
+            Enums.Events.VOI_MODIFIED,
+            (_sync, sourceRef, targetRef) => {
+                const sourceVP = getActualViewport(sourceRef);
+                const targetVP = getActualViewport(targetRef);
+                if (!sourceVP || !targetVP || sourceVP.id === targetVP.id) return;
+
+                const sourceEnabled = sourceVP.element.getAttribute('data-sync-enabled') !== 'false';
+                const targetEnabled = targetVP.element.getAttribute('data-sync-enabled') !== 'false';
+                if (!sourceEnabled || !targetEnabled) return;
+
+                const sourceProperties = sourceVP.getProperties();
+                const targetProperties = targetVP.getProperties();
+
+                if (sourceProperties.voi && targetProperties.voi) {
+                    targetVP.setProperties({
+                        voi: {
+                            windowWidth: sourceProperties.voi.windowWidth,
+                            windowCenter: sourceProperties.voi.windowCenter
+                        }
+                    });
+
+                    if (!(targetVP as any)._pendingSyncRender) {
+                        (targetVP as any)._pendingSyncRender = true;
+                        requestAnimationFrame(() => {
+                            targetVP.render();
+                            (targetVP as any)._pendingSyncRender = false;
+                        });
+                    }
+                }
+            }
+        );
+    }
+
+    return { stackSync, refLineSync, refLineStackSync, zoomSync, panSync, voiSync };
 };
 
 export const addViewportToRefLineSync = (viewportId: string, renderingEngineId: string) => {
@@ -195,12 +300,18 @@ export const addViewportToSync = (viewportId: string, renderingEngineId: string)
     if (!engine || !engine.getViewport(viewportId)) return;
 
     let stackSync = SynchronizerManager.getSynchronizer(SYNC_GROUP_ID);
+    let zoomSync = SynchronizerManager.getSynchronizer(ZOOM_SYNC_ID);
+    let panSync = SynchronizerManager.getSynchronizer(PAN_SYNC_ID);
+    let voiSync = SynchronizerManager.getSynchronizer(VOI_SYNC_ID);
 
-    if (!stackSync) {
-        ({ stackSync } = createSynchronizers());
+    if (!stackSync || !zoomSync || !panSync || !voiSync) {
+        ({ stackSync, zoomSync, panSync, voiSync } = createSynchronizers());
     }
 
     stackSync?.add({ viewportId, renderingEngineId });
+    zoomSync?.add({ viewportId, renderingEngineId });
+    panSync?.add({ viewportId, renderingEngineId });
+    voiSync?.add({ viewportId, renderingEngineId });
 };
 
 export const removeViewportFromSync = (viewportId: string, renderingEngineId: string) => {
@@ -208,8 +319,14 @@ export const removeViewportFromSync = (viewportId: string, renderingEngineId: st
     if (!engine) return;
 
     const stackSync = SynchronizerManager.getSynchronizer(SYNC_GROUP_ID);
+    const zoomSync = SynchronizerManager.getSynchronizer(ZOOM_SYNC_ID);
+    const panSync = SynchronizerManager.getSynchronizer(PAN_SYNC_ID);
+    const voiSync = SynchronizerManager.getSynchronizer(VOI_SYNC_ID);
 
     if (stackSync) stackSync.remove({ viewportId, renderingEngineId });
+    if (zoomSync) zoomSync.remove({ viewportId, renderingEngineId });
+    if (panSync) panSync.remove({ viewportId, renderingEngineId });
+    if (voiSync) voiSync.remove({ viewportId, renderingEngineId });
 };
 
 export const destroySynchronizer = () => {

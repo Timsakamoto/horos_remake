@@ -8,6 +8,7 @@ import {
     VOI,
     TOOL_GROUP_ID,
     RENDERING_ENGINE_ID,
+    ActiveLUT,
 } from './types';
 import {
     ToolGroupManager,
@@ -22,7 +23,6 @@ import {
     ProbeTool,
     AngleTool,
     BidirectionalTool,
-    MagnifyTool,
     CrosshairsTool,
     ReferenceLinesTool,
 } from '@cornerstonejs/tools';
@@ -62,6 +62,8 @@ interface ViewerContextType {
     setShowOverlays: React.Dispatch<React.SetStateAction<boolean>>;
     isInitReady: boolean;
     setIsInitReady: (ready: boolean) => void;
+    showAnnotationList: boolean;
+    setShowAnnotationList: React.Dispatch<React.SetStateAction<boolean>>;
 
     // Actions
     onSeriesSelect: (seriesUid: string | null, targetIndex?: number) => void;
@@ -70,6 +72,12 @@ interface ViewerContextType {
     toggleCinePlaying: () => void;
     toggleIsSynced: () => void;
     setViewportVoi: (index: number, voi: VOI | null) => void;
+    setViewportProjectionMode: (index: number, mode: ProjectionMode) => void;
+    setViewportLUT: (index: number, lut: ActiveLUT) => void;
+    setViewportFusionSeries: (index: number, fusionUid: string | null) => void;
+    setViewportFusionOpacity: (index: number, opacity: number) => void;
+    setViewportFusionLUT: (index: number, lut: ActiveLUT) => void;
+    setViewportFusionVOI: (index: number, voi: VOI | null) => void;
 }
 
 const ViewerContext = createContext<ViewerContextType | undefined>(undefined);
@@ -95,13 +103,19 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
     const [isAutoRotating, setIsAutoRotating] = useState(false);
     const [showOverlays, setShowOverlays] = useState(true);
     const [isInitReady, setIsInitReady] = useState(false);
+    const [showAnnotationList, setShowAnnotationList] = useState(false);
 
     const [viewports, setViewports] = useState<ViewportState[]>(
         new Array(12).fill(null).map((_, i) => ({
             id: `vp-${i}`,
             seriesUid: null,
             orientation: 'Default',
-            voi: null
+            voi: null,
+            projectionMode: 'NORMAL',
+            activeLUT: 'Grayscale',
+            fusionSeriesUid: null,
+            fusionOpacity: 0.5,
+            fusionLUT: 'Hot Metal'
         }))
     );
 
@@ -129,15 +143,40 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
                 // Ensure the slot exists and is consistent
                 if (!next[indexToUse]) {
                     console.warn(`[ViewerContext] target slot ${indexToUse} missing, creating...`);
-                    next[indexToUse] = { id: `vp-${indexToUse}`, seriesUid: null, orientation: 'Default', voi: null };
+                    next[indexToUse] = {
+                        id: `vp-${indexToUse}`,
+                        seriesUid: null,
+                        orientation: 'Default',
+                        voi: null,
+                        projectionMode: 'NORMAL',
+                        activeLUT: 'Grayscale',
+                        fusionSeriesUid: null,
+                        fusionOpacity: 0.5,
+                        fusionLUT: 'Hot Metal'
+                    };
                 }
 
-                next[indexToUse] = {
-                    ...next[indexToUse],
-                    seriesUid,
-                    orientation: 'Default',
-                    voi: null
-                };
+                // Automatic Fusion Detection Logic
+                // If dropping a series onto a slot that ALREADY has a series
+                if (next[indexToUse].seriesUid && next[indexToUse].seriesUid !== seriesUid) {
+                    console.log(`[ViewerContext] Potential fusion detected at slot ${indexToUse}`);
+                    next[indexToUse] = {
+                        ...next[indexToUse],
+                        fusionSeriesUid: seriesUid,
+                        fusionOpacity: 0.5,
+                        fusionLUT: 'Hot Metal'
+                    };
+                } else {
+                    next[indexToUse] = {
+                        ...next[indexToUse],
+                        seriesUid,
+                        orientation: 'Default',
+                        voi: null,
+                        projectionMode: 'NORMAL',
+                        activeLUT: 'Grayscale',
+                        fusionSeriesUid: null
+                    };
+                }
                 console.log(`[ViewerContext] updated viewports[${indexToUse}] to ${seriesUid}`);
                 return next;
             });
@@ -149,7 +188,15 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
             console.log(`[ViewerContext] Database mode: updating slot 0`);
             setViewports(prev => {
                 const next = [...prev];
-                next[0] = { ...next[0], seriesUid, orientation: 'Default', voi: null };
+                next[0] = {
+                    ...next[0],
+                    seriesUid,
+                    orientation: 'Default',
+                    voi: null,
+                    projectionMode: 'NORMAL',
+                    activeLUT: 'Grayscale',
+                    fusionSeriesUid: null
+                };
                 return next;
             });
         }
@@ -179,7 +226,11 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
         }
 
         if (view === '2D' && activeView !== '2D') {
-            setViewports(prev => prev.map(vp => ({ ...vp, orientation: 'Default' })));
+            setViewports(prev => {
+                const next = [...prev];
+                next[activeViewportIndex] = { ...next[activeViewportIndex], orientation: 'Acquisition' };
+                return next;
+            });
         }
 
         setActiveView(view);
@@ -204,7 +255,55 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
     const setViewportVoi = useCallback((index: number, voi: VOI | null) => {
         setViewports(prev => {
             const next = [...prev];
-            next[index] = { ...next[index], voi };
+            if (next[index]) next[index] = { ...next[index], voi };
+            return next;
+        });
+    }, []);
+
+    const setViewportProjectionMode = useCallback((index: number, mode: ProjectionMode) => {
+        setViewports(prev => {
+            const next = [...prev];
+            if (next[index]) next[index] = { ...next[index], projectionMode: mode };
+            return next;
+        });
+    }, []);
+
+    const setViewportLUT = useCallback((index: number, lut: ActiveLUT) => {
+        setViewports(prev => {
+            const next = [...prev];
+            if (next[index]) next[index] = { ...next[index], activeLUT: lut };
+            return next;
+        });
+    }, []);
+
+    const setViewportFusionSeries = useCallback((index: number, fusionUid: string | null) => {
+        setViewports(prev => {
+            const next = [...prev];
+            if (next[index]) next[index] = { ...next[index], fusionSeriesUid: fusionUid };
+            return next;
+        });
+    }, []);
+
+    const setViewportFusionOpacity = useCallback((index: number, opacity: number) => {
+        setViewports(prev => {
+            const next = [...prev];
+            if (next[index]) next[index] = { ...next[index], fusionOpacity: opacity };
+            return next;
+        });
+    }, []);
+
+    const setViewportFusionLUT = useCallback((index: number, lut: ActiveLUT) => {
+        setViewports(prev => {
+            const next = [...prev];
+            if (next[index]) next[index] = { ...next[index], fusionLUT: lut };
+            return next;
+        });
+    }, []);
+
+    const setViewportFusionVOI = useCallback((index: number, voi: VOI | null) => {
+        setViewports(prev => {
+            const next = [...prev];
+            if (next[index]) next[index] = { ...next[index], fusionVOI: voi };
             return next;
         });
     }, []);
@@ -236,7 +335,7 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
             'Probe': ProbeTool.toolName,
             'Angle': AngleTool.toolName,
             'Bidirectional': BidirectionalTool.toolName,
-            'Magnify': MagnifyTool.toolName,
+            'Magnify': ZoomTool.toolName,
             'Crosshairs': CrosshairsTool.toolName,
             'StackScroll': 'StackScroll',
             'CobbAngle': 'CobbAngle',
@@ -293,12 +392,19 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
         isAutoRotating, setIsAutoRotating,
         showOverlays, setShowOverlays,
         isInitReady, setIsInitReady,
+        showAnnotationList, setShowAnnotationList,
         onSeriesSelect,
         handleViewChange,
         handleLayoutChange,
         toggleCinePlaying,
         toggleIsSynced,
-        setViewportVoi
+        setViewportVoi,
+        setViewportProjectionMode,
+        setViewportLUT,
+        setViewportFusionSeries,
+        setViewportFusionOpacity,
+        setViewportFusionLUT,
+        setViewportFusionVOI
     };
 
     return <ViewerContext.Provider value={value}>{children}</ViewerContext.Provider>;

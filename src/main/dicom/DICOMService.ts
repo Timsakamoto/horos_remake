@@ -157,6 +157,11 @@ export class DICOMService {
             return jobManager.getJobs();
         });
 
+        ipcMain.handle('pacs:clearCompletedJobs', () => {
+            jobManager.clearCompleted();
+            return true;
+        });
+
         ipcMain.handle('pacs:startListener', async (_, aet: string, port: number, storagePath?: string) => {
             // Reset restart count on manual start
             this.restartCount = 0;

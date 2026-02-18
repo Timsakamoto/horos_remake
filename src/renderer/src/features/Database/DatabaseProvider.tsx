@@ -130,7 +130,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 }).$.subscribe(async (docs) => {
                     const allStudies = await database.studies.find().exec();
                     const studyMap = new Map<string, any[]>();
-                    allStudies.filter(s => (s.numberOfStudyRelatedInstances || 0) > 0).forEach(s => {
+                    allStudies.forEach(s => {
                         if (!studyMap.has(s.patientId)) studyMap.set(s.patientId, []);
                         studyMap.get(s.patientId)!.push(s);
                     });
@@ -177,8 +177,11 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                     const patientDocs = await database.patients.find({ selector: { id: { $in: patientIds } } }).exec();
                     const patientMap = new Map(patientDocs.map(p => [p.id, p]));
 
-                    const mappedStudiesAsPatients = docs.filter(d => (d.numberOfStudyRelatedInstances || 0) > 0).map(doc => {
+                    const globalModalities = new Set<string>();
+                    const mappedStudiesAsPatients = docs.map(doc => {
                         const patientDoc = patientMap.get(doc.patientId);
+                        (doc.modalitiesInStudy || []).forEach(m => globalModalities.add(m));
+
                         return {
                             id: doc.studyInstanceUID,
                             patientID: doc.patientId,
@@ -197,7 +200,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                         };
                     });
                     setPatients(mappedStudiesAsPatients);
-                    setAvailableModalities([]);
+                    setAvailableModalities(Array.from(globalModalities).sort());
                 });
             }
             return () => sub?.unsubscribe();

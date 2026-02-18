@@ -3,7 +3,6 @@ import {
     LayoutGrid,
     Layers,
     Move,
-    Sun,
     Ruler,
     Circle,
     Database,
@@ -20,17 +19,21 @@ import {
     Scissors,
     RotateCw,
     Type,
-    // Target, // Unused
     AlignJustify,
     Columns,
     PanelRight,
-    Send
+    Send,
+    Palette,
+    RefreshCw,
+    Maximize2,
+    List
 } from 'lucide-react';
 import { useDatabase } from '../Database/DatabaseProvider';
 import { CLUT_PRESETS } from './CLUTPresets';
 import { GridSelector } from './GridSelector';
+import { usePACS } from '../PACS/PACSProvider';
 
-import { ViewMode, ToolMode, ProjectionMode, ToolbarMode } from './types';
+import { ViewMode, ToolMode, ProjectionMode, ToolbarMode, VOI } from './types';
 
 export interface WWLPreset {
     name: string;
@@ -46,8 +49,6 @@ export const WWL_PRESETS: WWLPreset[] = [
     { name: 'Bone', windowWidth: 2000, windowCenter: 400 },
 ];
 
-// ProjectionMode and ToolbarMode are now imported from types.ts
-
 interface Props {
     mode: ToolbarMode;
     activeView: ViewMode;
@@ -57,34 +58,41 @@ interface Props {
     onOpenViewer?: () => void;
     onImport?: () => void;
     onOpenSettings?: () => void;
-    // Phase 2 Props
     isCinePlaying?: boolean;
     onCineToggle?: () => void;
-    activeCLUT?: string;
-    onCLUTChange?: (name: string) => void;
     isSynced?: boolean;
     onSyncToggle?: () => void;
-    // Phase 3/4 Props
     projectionMode?: ProjectionMode;
     onProjectionModeChange?: (mode: ProjectionMode) => void;
     slabThickness?: number;
     onSlabThicknessChange?: (thickness: number) => void;
+    currentLUT?: string;
+    onLUTChange?: (lut: string) => void;
     selectedSeriesUid?: string | null;
     layout?: { rows: number; cols: number };
     onLayoutChange?: (rows: number, cols: number) => void;
     activeModality?: string | null;
-    // Phase D Props
     isClipping?: boolean;
     onClippingToggle?: () => void;
     clippingRange?: number;
     onClippingRangeChange?: (range: number) => void;
     isAutoRotating?: boolean;
     onAutoRotateToggle?: () => void;
-    // Overlay Props
     showOverlays?: boolean;
     onToggleOverlays?: () => void;
     onPresetSelect?: (preset: WWLPreset) => void;
-    activeViewportOrientation?: 'Axial' | 'Coronal' | 'Sagittal' | 'Default';
+    activeViewportOrientation?: 'Axial' | 'Coronal' | 'Sagittal' | 'Acquisition' | 'Default';
+    showActivityManager?: boolean;
+    onToggleActivityManager?: () => void;
+    fusionSeriesUid?: string | null;
+    fusionOpacity?: number;
+    onFusionOpacityChange?: (opacity: number) => void;
+    fusionLUT?: string;
+    onFusionLUTChange?: (lut: string) => void;
+    fusionVOI?: VOI | null;
+    onFusionVOIChange?: (voi: VOI) => void;
+    showAnnotationList?: boolean;
+    onToggleAnnotationList?: () => void;
 }
 
 export const Toolbar = ({
@@ -98,14 +106,14 @@ export const Toolbar = ({
     onOpenSettings,
     isCinePlaying = false,
     onCineToggle,
-    activeCLUT = 'Default',
-    onCLUTChange,
     isSynced = false,
     onSyncToggle,
     projectionMode = 'NORMAL',
     onProjectionModeChange,
     slabThickness = 0,
     onSlabThicknessChange,
+    currentLUT = 'Grayscale',
+    onLUTChange,
     layout = { rows: 1, cols: 1 },
     onLayoutChange,
     activeModality,
@@ -119,22 +127,33 @@ export const Toolbar = ({
     onToggleOverlays,
     onPresetSelect,
     activeViewportOrientation,
+    showActivityManager,
+    onToggleActivityManager,
+    fusionSeriesUid,
+    fusionOpacity = 0.5,
+    onFusionOpacityChange,
+    fusionLUT = 'Hot Metal',
+    onFusionLUTChange,
+    fusionVOI,
+    onFusionVOIChange,
+    showAnnotationList = false,
+    onToggleAnnotationList
 }: Props) => {
     const { checkedItems, setShowSendModal } = useDatabase();
+    const { activeJobs } = usePACS();
     const selectedCount = useMemo(() => checkedItems.size, [checkedItems]);
-    // console.log('Toolbar Render:', { activeView, activeViewportOrientation });
 
     const [showMPRControls, setShowMPRControls] = useState(false);
     const [showWLPresets, setShowWLPresets] = useState(false);
+    const [showLUTPresets, setShowLUTPresets] = useState(false);
 
     const renderViewButton = (mode: ViewMode, Icon: any, label: string) => {
         const isMprOr3D = mode === 'MPR' || mode === '3D';
         const isDisabled = !!(isMprOr3D && activeModality && ['CR', 'DX', 'MG', 'RF', 'XA'].includes(activeModality));
-        const isButtonActive = activeView === mode || activeViewportOrientation === mode;
+        const isButtonActive = activeView === mode || activeViewportOrientation === mode || (mode === '2D' && activeViewportOrientation === 'Acquisition');
 
         const handleClick = () => {
             if (isDisabled) return;
-            // The user wants Slab/MIP controls for Axial, Coronal, and Sagittal, but NOT for MPR.
             const isSectional = mode === 'Axial' || mode === 'Coronal' || mode === 'Sagittal';
 
             if (isSectional) {
@@ -142,7 +161,7 @@ export const Toolbar = ({
                     setShowMPRControls(!showMPRControls);
                 } else {
                     onViewChange(mode);
-                    setShowMPRControls(false); // Reset on new entry
+                    setShowMPRControls(false);
                 }
             } else {
                 onViewChange(mode);
@@ -175,10 +194,8 @@ export const Toolbar = ({
                 {/* Section Controls Popup (Axial, Coronal, Sagittal) */}
                 {(mode === 'Axial' || mode === 'Coronal' || mode === 'Sagittal') && activeViewportOrientation === mode && showMPRControls && (
                     <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-white/90 backdrop-blur-md border border-gray-200 shadow-xl rounded-xl p-3 z-50 animate-in fade-in zoom-in-95 duration-200 w-64 flex flex-col gap-3">
-                        {/* Triangle Arrow */}
                         <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white rotate-45 border-t border-l border-gray-200" />
 
-                        {/* Projection Mode */}
                         <div className="flex bg-gray-100/50 p-1 rounded-lg gap-0.5">
                             {(['NORMAL', 'MIP', 'MINIP'] as ProjectionMode[]).map((m) => (
                                 <button
@@ -196,7 +213,6 @@ export const Toolbar = ({
                             ))}
                         </div>
 
-                        {/* Slab Thickness */}
                         <div className="flex flex-col gap-1">
                             <div className="flex justify-between items-center px-1">
                                 <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider">Slab Thickness</span>
@@ -245,10 +261,7 @@ export const Toolbar = ({
             onDoubleClick={() => (window as any).electron?.toggleMaximize()}
             className="h-24 bg-gradient-to-b from-[#e8e8e8] to-[#c2c2c2] border-b border-[#a0a0a0] flex flex-col pt-8 select-none z-40 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] drag"
         >
-            {/* ... (Database Mode Block) ... */}
-
             {mode === 'DATABASE' ? (
-                // ... (Existing Database JSX) ...
                 <div className="flex-1 flex items-center pl-8 pr-8 no-drag">
                     <div className="flex bg-[#000000]/5 p-0.5 rounded-lg gap-0.5 border border-[#000000]/10 shadow-inner">
                         {renderViewButton('Database', Database, 'Local DB')}
@@ -259,7 +272,6 @@ export const Toolbar = ({
                     <div className="flex-1 min-w-[20px] h-full" />
 
                     <div className="flex items-center gap-6">
-                        {/* Import Button */}
                         <button
                             onClick={onImport}
                             className="group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1 bg-white hover:bg-gray-50 text-gray-600 border border-[#c0c0c0] shadow-sm hover:scale-105 active:scale-95"
@@ -282,7 +294,6 @@ export const Toolbar = ({
 
                         <div className="h-10 w-[1px] bg-[#000000]/10 mx-1" />
 
-                        {/* Send Button */}
                         <button
                             onClick={() => setShowSendModal(true)}
                             disabled={selectedCount === 0}
@@ -310,6 +321,47 @@ export const Toolbar = ({
 
                     <div className="flex items-center gap-2">
                         <button
+                            onClick={onToggleActivityManager}
+                            className={`
+                                    group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1.5 relative
+                                    ${showActivityManager
+                                    ? 'bg-blue-50/50 text-peregrine-accent shadow-inner'
+                                    : 'text-gray-400 hover:bg-gray-50 hover:text-gray-600'
+                                }
+                                `}
+                            title={`${activeJobs.length} active background tasks`}
+                        >
+                            <div className={`p-2 rounded-lg transition-all duration-300 ${showActivityManager ? 'scale-110' : 'group-hover:scale-110'}`}>
+                                <Activity size={18} strokeWidth={showActivityManager ? 2.5 : 2} className={activeJobs.some(j => j.status === 'active') ? 'animate-pulse' : ''} />
+                            </div>
+                            <span className="text-[9px] font-black uppercase tracking-widest text-[#8e8e93]">Jobs</span>
+
+                            {activeJobs.length > 0 && (
+                                <div className="absolute top-2 right-2 min-w-[16px] h-4 px-1 flex items-center justify-center bg-peregrine-accent text-white rounded-full text-[9px] font-black border-2 border-white shadow-sm ring-1 ring-black/5 animate-in zoom-in-50 duration-200">
+                                    {activeJobs.length}
+                                </div>
+                            )}
+                        </button>
+
+                        {/* Annotation List Toggle Button (Database Mode) */}
+                        <button
+                            onClick={onToggleAnnotationList}
+                            className={`
+                                    group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1.5
+                                    ${showAnnotationList
+                                    ? 'bg-blue-50/50 text-peregrine-accent shadow-inner'
+                                    : 'text-gray-400 hover:bg-gray-50 hover:text-gray-600'
+                                }
+                                `}
+                            title="Show ROI / Measurement List"
+                        >
+                            <div className={`p-2 rounded-lg transition-all duration-300 ${showAnnotationList ? 'scale-110' : 'group-hover:scale-110'}`}>
+                                <List size={18} strokeWidth={showAnnotationList ? 2.5 : 2} />
+                            </div>
+                            <span className="text-[9px] font-black uppercase tracking-widest text-[#8e8e93]">List</span>
+                        </button>
+
+                        <button
                             onClick={onOpenSettings}
                             className="group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1 bg-white hover:bg-gray-50 text-gray-500 hover:text-peregrine-accent border border-[#c0c0c0] shadow-sm hover:scale-105 active:scale-95"
                             title="Preferences"
@@ -323,30 +375,57 @@ export const Toolbar = ({
                 </div>
             ) : (
                 <div className="flex-1 flex items-center pl-8 pr-8 no-drag">
-                    {/* Database & PACS Navigation (Persistent) */}
                     <div className="flex bg-[#000000]/5 p-0.5 rounded-lg gap-0.5 mr-6 border border-[#000000]/10 shadow-inner">
                         {renderViewButton('Database', Database, 'Local DB')}
                     </div>
 
                     <div className="h-10 w-[1.5px] bg-[#000000]/15 mr-6 shadow-[1px_0_0_rgba(255,255,255,0.4)]" />
 
-                    {/* Scrollable Tool Area */}
                     <div className="flex-1 overflow-x-auto overflow-y-hidden no-scrollbar scroll-smooth flex items-center pr-12 group/scroll relative">
-                        {/* Fade edges to indicate more items */}
                         <div className="flex items-center">
-                            {/* View Modes & Grid Selector */}
                             <div className="flex bg-[#000000]/5 p-0.5 rounded-lg gap-0.5 mr-6 border border-[#000000]/10 shadow-inner flex-shrink-0">
                                 {onLayoutChange && <GridSelector currentLayout={layout} onChange={onLayoutChange} />}
-                                {renderViewButton('2D', Layers, '2D')}
+                                {renderViewButton('2D', Layers, 'Original')}
                                 {renderViewButton('Axial', AlignJustify, 'Axial')}
                                 {renderViewButton('Coronal', Columns, 'Coronal')}
                                 {renderViewButton('Sagittal', PanelRight, 'Sagittal')}
                                 {renderViewButton('MPR', LayoutGrid, 'MPR')}
+
+                                <div className="h-10 w-[1.5px] bg-[#000000]/15 mx-2 shadow-[1px_0_0_rgba(255,255,255,0.4)]" />
+
+                                <button
+                                    onClick={() => onProjectionModeChange?.(projectionMode === 'MIP' ? 'NORMAL' : 'MIP')}
+                                    className={`
+                                        group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1.5
+                                        ${projectionMode === 'MIP'
+                                            ? 'bg-orange-50/50 text-orange-600 shadow-inner'
+                                            : 'text-gray-400 hover:bg-gray-50 hover:text-gray-600'}
+                                    `}
+                                    title="Maximum Intensity Projection"
+                                >
+                                    <div className="p-2 rounded-lg font-black text-[10px]">MIP</div>
+                                    <span className="text-[9px] font-black uppercase tracking-widest">MIP</span>
+                                </button>
+
+                                <button
+                                    onClick={onAutoRotateToggle}
+                                    className={`
+                                        group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1.5
+                                        ${isAutoRotating
+                                            ? 'bg-purple-50/50 text-purple-600 shadow-inner'
+                                            : 'text-gray-400 hover:bg-gray-50 hover:text-gray-600'}
+                                    `}
+                                    title="Auto Horizontal Rotation"
+                                >
+                                    <div className={`p-2 rounded-lg transition-all duration-300 ${isAutoRotating ? 'animate-spin-slow' : ''}`}>
+                                        <RefreshCw size={18} strokeWidth={isAutoRotating ? 2.5 : 2} />
+                                    </div>
+                                    <span className="text-[9px] font-black uppercase tracking-widest">Rotate</span>
+                                </button>
                             </div>
 
                             <div className="h-10 w-[1.5px] bg-[#000000]/15 mr-6 shadow-[1px_0_0_rgba(255,255,255,0.4)] flex-shrink-0" />
 
-                            {/* Standard Tools Group */}
                             <div className="flex gap-1 mr-6 relative">
                                 {activeView === 'MPR' && renderToolButton('Crosshairs', Crosshair, 'Sync')}
 
@@ -361,29 +440,69 @@ export const Toolbar = ({
                                             }
                                         }}
                                         className={`
-                                    group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1.5
-                                    ${activeTool === 'WindowLevel'
+                                            group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1.5
+                                            ${activeTool === 'WindowLevel'
                                                 ? 'bg-blue-50/50 text-peregrine-accent shadow-inner'
                                                 : 'text-gray-400 hover:bg-gray-50 hover:text-gray-600'
                                             }
-                                `}
+                                        `}
                                         title="Window/Level (Click again for presets)"
                                     >
                                         <div className={`p-2 rounded-lg transition-all duration-300 ${activeTool === 'WindowLevel' ? 'scale-110' : 'group-hover:scale-110'}`}>
-                                            <Sun size={18} strokeWidth={activeTool === 'WindowLevel' ? 2.5 : 2} />
+                                            <Maximize2 size={18} strokeWidth={activeTool === 'WindowLevel' ? 2.5 : 2} />
                                         </div>
                                         <span className="text-[9px] font-black uppercase tracking-widest text-[#8e8e93]">W/L</span>
                                     </button>
 
-                                    {/* WW/WL Presets Popover */}
+                                    <div className="relative">
+                                        <button
+                                            onClick={() => setShowLUTPresets(!showLUTPresets)}
+                                            className={`
+                                                group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1.5
+                                                ${currentLUT !== 'Grayscale'
+                                                    ? 'bg-indigo-50/50 text-indigo-600 shadow-inner'
+                                                    : 'text-gray-400 hover:bg-gray-50 hover:text-gray-600'}
+                                            `}
+                                            title="Color Maps / LUTs"
+                                        >
+                                            <div className="p-2 rounded-lg">
+                                                <Palette size={18} strokeWidth={currentLUT !== 'Grayscale' ? 2.5 : 2} />
+                                            </div>
+                                            <span className="text-[9px] font-black uppercase tracking-widest text-[#8e8e93]">Color</span>
+                                        </button>
+
+                                        {showLUTPresets && (
+                                            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-white/95 backdrop-blur-md border border-gray-200 shadow-2xl rounded-xl p-2 z-50 animate-in fade-in zoom-in-95 duration-200 min-w-[140px] flex flex-col gap-0.5">
+                                                <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white/95 rotate-45 border-t border-l border-gray-200" />
+                                                <div className="px-2 py-1.5 border-b border-gray-100 mb-1">
+                                                    <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Color LUTs</span>
+                                                </div>
+                                                {['Grayscale', 'Hot Metal', 'PET', 'Rainbow', 'Jet'].map(lut => (
+                                                    <button
+                                                        key={lut}
+                                                        onClick={() => {
+                                                            onLUTChange?.(lut);
+                                                            setShowLUTPresets(false);
+                                                        }}
+                                                        className={`
+                                                            w-full text-left px-3 py-2 text-[10px] font-bold transition-all rounded-lg flex items-center gap-2
+                                                            ${currentLUT === lut ? 'bg-indigo-50 text-indigo-600' : 'text-gray-600 hover:bg-gray-50'}
+                                                        `}
+                                                    >
+                                                        <div className={`w-3 h-3 rounded-full ${lut === 'Grayscale' ? 'bg-gray-400' : 'bg-gradient-to-r from-red-500 via-yellow-400 to-blue-500'}`} />
+                                                        {lut}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+
                                     {activeTool === 'WindowLevel' && showWLPresets && (
                                         <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-white/95 backdrop-blur-md border border-gray-200 shadow-2xl rounded-xl p-2 z-50 animate-in fade-in zoom-in-95 duration-200 min-w-[140px] flex flex-col gap-0.5">
                                             <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white/95 rotate-45 border-t border-l border-gray-200" />
-
                                             <div className="px-2 py-1.5 border-b border-gray-100 mb-1">
                                                 <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Presets (WW/WL)</span>
                                             </div>
-
                                             {WWL_PRESETS.map(preset => (
                                                 <button
                                                     key={preset.name}
@@ -409,7 +528,6 @@ export const Toolbar = ({
 
                             <div className="h-10 w-[1.5px] bg-[#000000]/15 mr-6 shadow-[1px_0_0_rgba(255,255,255,0.4)] flex-shrink-0" />
 
-                            {/* Measurement Tools Group */}
                             <div className="flex gap-1 mr-6 relative">
                                 {renderToolButton('Length', Ruler, 'Dist')}
                                 {renderToolButton('Angle', Activity, 'Angle')}
@@ -419,16 +537,12 @@ export const Toolbar = ({
                                 {renderToolButton('Arrow', ArrowUpRight, 'Arrow')}
                                 {renderToolButton('Text', Type, 'Text')}
 
-                                {/* Overlay Toggle Button */}
                                 <button
                                     onClick={onToggleOverlays}
                                     className={`
-                                group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1.5
-                                ${showOverlays
-                                            ? 'bg-blue-50/50 text-peregrine-accent shadow-inner'
-                                            : 'text-gray-400 hover:bg-gray-50 hover:text-gray-600'
-                                        }
-                            `}
+                                        group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1.5
+                                        ${showOverlays ? 'bg-blue-50/50 text-peregrine-accent shadow-inner' : 'text-gray-400 hover:bg-gray-50 hover:text-gray-600'}
+                                    `}
                                     title="Toggle Overlays (Tab)"
                                 >
                                     <div className={`p-2 rounded-lg transition-all duration-300 ${showOverlays ? 'scale-110' : 'group-hover:scale-110'}`}>
@@ -440,8 +554,17 @@ export const Toolbar = ({
 
                             <div className="h-10 w-[1.5px] bg-[#000000]/15 mr-6 shadow-[1px_0_0_rgba(255,255,255,0.4)] flex-shrink-0" />
 
-                            {/* Controls Group: Cine, CLUT, Sync */}
                             <div className="flex items-center gap-4">
+                                {/* Annotation List Toggle Button (Viewer Mode) */}
+                                <button
+                                    onClick={onToggleAnnotationList}
+                                    className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl transition-all duration-300 gap-1 ${showAnnotationList ? 'bg-blue-50 text-peregrine-accent' : 'text-gray-400 hover:bg-gray-50'}`}
+                                    title="Toggle ROI / Annotation List"
+                                >
+                                    <List size={16} />
+                                    <span className="text-[8px] font-black uppercase tracking-widest">List</span>
+                                </button>
+
                                 <button
                                     onClick={onCineToggle}
                                     className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl transition-all duration-300 gap-1 ${isCinePlaying ? 'bg-orange-50 text-orange-500' : 'text-gray-400 hover:bg-gray-50'}`}
@@ -455,8 +578,8 @@ export const Toolbar = ({
                                     <span className="text-[7px] font-black text-gray-400 uppercase tracking-widest pl-1">LUT</span>
                                     <div className="relative group">
                                         <select
-                                            value={activeCLUT}
-                                            onChange={(e) => onCLUTChange?.(e.target.value)}
+                                            value={currentLUT}
+                                            onChange={(e) => onLUTChange?.(e.target.value)}
                                             className="appearance-none bg-white border border-gray-300 rounded-lg px-2 py-0.5 text-[9px] font-bold text-gray-700 w-full focus:outline-none focus:ring-1 focus:ring-peregrine-accent pr-5"
                                         >
                                             {CLUT_PRESETS.map(p => (
@@ -479,10 +602,6 @@ export const Toolbar = ({
 
                             <div className="flex-1 min-w-[20px] h-full" />
 
-                            {/* Phase 4: MPR Tools */}
-                            {/* Phase 4: MPR Tools (Moved to Popover) */}
-
-                            {/* Phase D: 3D Visualization Tools */}
                             {activeView === '3D' && (
                                 <div className="flex items-center gap-6 animate-in fade-in slide-in-from-left-8 duration-700 border-l border-gray-200 pl-6 ml-6">
                                     <div className="flex gap-2">
@@ -527,6 +646,72 @@ export const Toolbar = ({
                                             </div>
                                         </div>
                                     )}
+                                </div>
+                            )}
+
+                            {/* Fusion Controls Section */}
+                            {fusionSeriesUid && (
+                                <div className="flex items-center gap-6 animate-in fade-in slide-in-from-left-8 duration-700 border-l border-gray-200 pl-6 ml-6">
+                                    <div className="flex flex-col gap-1 w-32">
+                                        <div className="flex justify-between items-center px-0.5">
+                                            <span className="text-[7px] text-gray-400 font-black uppercase tracking-widest">Fusion Opacity</span>
+                                            <span className="text-[10px] font-black text-peregrine-accent">{Math.round(fusionOpacity * 100)}%</span>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max="1"
+                                            step="0.05"
+                                            value={fusionOpacity}
+                                            onChange={(e) => onFusionOpacityChange?.(parseFloat(e.target.value))}
+                                            className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-peregrine-accent"
+                                        />
+                                    </div>
+
+                                    <div className="flex flex-col gap-0.5 w-24">
+                                        <span className="text-[7px] font-black text-gray-400 uppercase tracking-widest pl-1">Fusion LUT</span>
+                                        <div className="relative group">
+                                            <select
+                                                value={fusionLUT}
+                                                onChange={(e) => onFusionLUTChange?.(e.target.value)}
+                                                className="appearance-none bg-white border border-gray-300 rounded-lg px-2 py-0.5 text-[9px] font-bold text-gray-700 w-full focus:outline-none focus:ring-1 focus:ring-peregrine-accent pr-5"
+                                            >
+                                                {['Grayscale', 'Hot Metal', 'PET', 'Rainbow', 'Jet', 'Hot'].map(lut => (
+                                                    <option key={lut} value={lut}>{lut}</option>
+                                                ))}
+                                            </select>
+                                            <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 border-l border-gray-200 pl-4">
+                                        <div className="flex flex-col gap-0.5 w-16">
+                                            <span className="text-[7px] font-black text-gray-400 uppercase tracking-widest px-1">F-WW</span>
+                                            <input
+                                                type="number"
+                                                value={Math.round(fusionVOI?.windowWidth || 0)}
+                                                onChange={(e) => onFusionVOIChange?.({ ...fusionVOI, windowWidth: parseInt(e.target.value) })}
+                                                className="bg-white border border-gray-300 rounded px-1 py-0.5 text-[9px] font-bold text-gray-700 w-full focus:outline-none focus:ring-1 focus:ring-peregrine-accent"
+                                            />
+                                        </div>
+                                        <div className="flex flex-col gap-0.5 w-16">
+                                            <span className="text-[7px] font-black text-gray-400 uppercase tracking-widest px-1">F-WL</span>
+                                            <input
+                                                type="number"
+                                                value={Math.round(fusionVOI?.windowCenter || 0)}
+                                                onChange={(e) => onFusionVOIChange?.({ ...fusionVOI, windowCenter: parseInt(e.target.value) })}
+                                                className="bg-white border border-gray-300 rounded px-1 py-0.5 text-[9px] font-bold text-gray-700 w-full focus:outline-none focus:ring-1 focus:ring-peregrine-accent"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <button
+                                        onClick={() => onFusionLUTChange?.('Grayscale')}
+                                        className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600 transition-all font-black text-[10px]"
+                                        title="Reset Fusion Color"
+                                    >
+                                        <RefreshCw size={14} />
+                                    </button>
                                 </div>
                             )}
                         </div>

@@ -33,14 +33,15 @@ export interface DicomMetadata {
     windowWidth: number;
     rescaleIntercept: number;
     rescaleSlope: number;
+    frameOfReferenceUID: string;
     photometricInterpretation: string;
     // Geometry
     imagePositionPatient: string;
     imageOrientationPatient: string;
     pixelSpacing: string;
-
     sliceThickness: number;
     acquisitionNumber: number;
+
     echoNumber?: number;
     temporalPositionIdentifier?: number;
     imageType?: string[];
@@ -58,7 +59,6 @@ export interface DicomMetadata {
     temporalPositionIndex?: number;
     stackID?: string;
     acquisitionTime?: number;
-    frameOfReferenceUID?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -475,7 +475,7 @@ const parseWithDicomParser = (buffer: ArrayBuffer | Uint8Array): DicomMetadata |
             temporalPositionIndex: getNumber('x00209128'),
             stackID: getString('x00209056'),
             acquisitionTime: getNumber('x00080032'),
-            frameOfReferenceUID: getString('x00200052'),
+            frameOfReferenceUID: getString('x00200052') || '',
         };
     } catch (e) {
         console.error('DICOM Parser Fallback failed:', e);

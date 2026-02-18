@@ -24,6 +24,8 @@ export const COLORMAPS = [
     'Jet',
     'Hot',
     'Cool',
-    'Pet',
-    'HotIron'
+    'PET',
+    'HotIron',
+    'Hot Metal',
+    'Rainbow'
 ];

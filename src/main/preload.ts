@@ -28,6 +28,7 @@ const api = {
         startListener: (aet: string, port: number, storagePath?: string) => ipcRenderer.invoke('pacs:startListener', aet, port, storagePath),
         stopListener: () => ipcRenderer.invoke('pacs:stopListener'),
         getJobs: () => ipcRenderer.invoke('pacs:getJobs'),
+        clearCompletedJobs: () => ipcRenderer.invoke('pacs:clearCompletedJobs'),
         onJobUpdated: (callback: any) => {
             const listener = (_: any, job: any) => callback(job);
             ipcRenderer.on('pacs:jobUpdated', listener);

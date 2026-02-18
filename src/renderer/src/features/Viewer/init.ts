@@ -20,7 +20,6 @@ import {
     ArrowAnnotateTool,
     CobbAngleTool,
     BidirectionalTool,
-    MagnifyTool,
     CrosshairsTool,
     ReferenceLinesTool,
 } from '@cornerstonejs/tools';
@@ -35,76 +34,83 @@ cornerstoneDICOMImageLoader.external.cornerstone = cornerstone;
 cornerstoneDICOMImageLoader.external.dicomParser = dicomParser;
 
 // CRITICAL: Register the loader IMMEDIATELY upon module load.
-// This ensures that even if child components (Viewport) mount and call setStack 
-// before the parent (App) finishes async initCornerstone, the 'electronfile:' 
-// scheme is already recognized by Cornerstone's imageLoader.
 registerElectronImageLoader();
 
-let isInitialized = false;
+let initPromise: Promise<void> | null = null;
 
 export const initCornerstone = async () => {
-    if (isInitialized) return;
-    console.log('Cornerstone: Initializing Core & Tools...');
+    if (initPromise) return initPromise;
 
-    // 1. Init Core
-    await csRenderInit();
-    await csToolsInit();
+    initPromise = (async () => {
+        console.log('Cornerstone: Initializing Core & Tools...');
 
-    // 1.1 Configure Cache (2GB)
-    cornerstone.cache.setMaxCacheSize(2048 * 1024 * 1024);
+        // 1. Init Core
+        await csRenderInit();
+        await csToolsInit();
 
-    // 2. Register Tools Globally (Once)
-    const tools = [
-        WindowLevelTool,
-        PanTool,
-        ZoomTool,
-        StackScrollMouseWheelTool,
-        StackScrollTool,
-        MagnifyTool,
-        CrosshairsTool,
-        ReferenceLinesTool,
-    ];
+        // 1.1 Configure Cache (2GB)
+        cornerstone.cache.setMaxCacheSize(2048 * 1024 * 1024);
 
-    const annotationTools = [
-        LengthTool,
-        EllipticalROITool,
-        RectangleROITool,
-        ProbeTool,
-        AngleTool,
-        ArrowAnnotateTool,
-        CobbAngleTool,
-        BidirectionalTool,
-    ];
+        // 2. Register Tools Globally (Once)
+        const tools = [
+            WindowLevelTool,
+            PanTool,
+            ZoomTool,
+            StackScrollMouseWheelTool,
+            StackScrollTool,
+            CrosshairsTool,
+            ReferenceLinesTool,
+        ];
 
-    [...tools, ...annotationTools].forEach(tool => {
+        const annotationTools = [
+            LengthTool,
+            EllipticalROITool,
+            RectangleROITool,
+            ProbeTool,
+            AngleTool,
+            ArrowAnnotateTool,
+            CobbAngleTool,
+            BidirectionalTool,
+        ];
+
+        [...tools, ...annotationTools].forEach(tool => {
+            try {
+                // We use try-catch because CS3D addTool throws if already registered.
+                // This is the safest way to handle HMR and React Strict Mode.
+                addTool(tool);
+            } catch (e) {
+                // console.debug(`Cornerstone: Tool ${tool.toolName} already registered.`);
+            }
+        });
+
+        // 3. Configure DICOM Image Loader
+        cornerstoneDICOMImageLoader.configure({
+            useWebWorkers: false,
+            decodeConfig: {
+                convertFloatPixelDataToInt: false,
+            },
+        });
+
         try {
-            addTool(tool);
-        } catch (e) {
-            // Already added
-        }
-    });
+            cornerstoneDICOMImageLoader.wadouri.register(cornerstone);
+            cornerstoneDICOMImageLoader.wadors.register(cornerstone);
+        } catch (e) { /* ignore */ }
 
-    // 3. Configure DICOM Image Loader (Default for non-electronfile)
-    cornerstoneDICOMImageLoader.configure({
-        useWebWorkers: false,
-        decodeConfig: {
-            convertFloatPixelDataToInt: false,
-        },
-    });
-    cornerstoneDICOMImageLoader.wadouri.register(cornerstone);
-    cornerstoneDICOMImageLoader.wadors.register(cornerstone);
+        // 4. Register Volume Loaders
+        try {
+            (volumeLoader.registerUnknownVolumeLoader as any)(
+                cornerstoneStreamingImageVolumeLoader,
+            );
+            (volumeLoader.registerVolumeLoader as any)(
+                'cornerstoneStreamingImageVolume',
+                cornerstoneStreamingImageVolumeLoader,
+            );
+        } catch (e) { /* ignore */ }
 
-    // 4. Register Volume Loaders
-    (volumeLoader.registerUnknownVolumeLoader as any)(
-        cornerstoneStreamingImageVolumeLoader,
-    );
-    (volumeLoader.registerVolumeLoader as any)(
-        'cornerstoneStreamingImageVolume',
-        cornerstoneStreamingImageVolumeLoader,
-    );
+        (window as any).cornerstone = cornerstone;
+        (window as any).cornerstoneTools = cornerstoneTools;
+        console.log('Cornerstone: Initialization Complete.');
+    })();
 
-    isInitialized = true;
-    (window as any).cornerstone = cornerstone;
-    (window as any).cornerstoneTools = cornerstoneTools;
-    console.log('Cornerstone: Initialization Complete.');
+    return initPromise;
 };

@@ -5,7 +5,7 @@ import { RxDBUpdatePlugin } from 'rxdb/plugins/update';
 import { RxDBQueryBuilderPlugin } from 'rxdb/plugins/query-builder';
 import { RxDBLocalDocumentsPlugin } from 'rxdb/plugins/local-documents';
 import { RxDBLeaderElectionPlugin } from 'rxdb/plugins/leader-election';
-import { RxDBDevModePlugin } from 'rxdb/plugins/dev-mode';
+import { RxDBDevModePlugin, disableWarnings } from 'rxdb/plugins/dev-mode';
 import { PatientSchema, PatientDocType } from './schema/patient.schema';
 import { StudySchema, StudyDocType } from './schema/study.schema';
 import { SeriesSchema, SeriesDocType } from './schema/series.schema';
@@ -23,6 +23,7 @@ addRxPlugin(RxDBLeaderElectionPlugin);
 // dev-mode plugin should only be added in development
 if (process.env.NODE_ENV === 'development') {
     addRxPlugin(RxDBDevModePlugin);
+    disableWarnings();
 }
 
 export type AntigravityDatabaseCollections = {

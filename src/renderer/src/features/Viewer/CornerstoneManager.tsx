@@ -1,5 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { getRenderingEngine } from '@cornerstonejs/core';
+import {
+    getRenderingEngine,
+    metaData
+} from '@cornerstonejs/core';
+import { initCornerstone } from './init';
 import {
     ToolGroupManager,
     WindowLevelTool,
@@ -14,17 +18,18 @@ import {
     ArrowAnnotateTool,
     CobbAngleTool,
     BidirectionalTool,
-    MagnifyTool,
     CrosshairsTool,
     ReferenceLinesTool
 } from '@cornerstonejs/tools';
-import { initCornerstone } from './init';
 import { useViewer } from './ViewerContext';
-import { TOOL_GROUP_ID, RENDERING_ENGINE_ID } from './types';
+
+const RENDERING_ENGINE_ID = 'peregrine-engine';
+const TOOL_GROUP_ID = 'peregrine-tool-group';
 
 export const CornerstoneManager = () => {
-    const { setIsInitReady } = useViewer();
+    const { setIsInitReady, isAutoRotating, activeViewportIndex, viewports } = useViewer();
     const initializedRef = useRef(false);
+    const rotationFrameRef = useRef<number | null>(null);
 
     useEffect(() => {
         if (initializedRef.current) return;
@@ -45,18 +50,16 @@ export const CornerstoneManager = () => {
                     WindowLevelTool, PanTool, ZoomTool, StackScrollMouseWheelTool,
                     LengthTool, EllipticalROITool, RectangleROITool, ProbeTool,
                     AngleTool, ArrowAnnotateTool, CobbAngleTool, BidirectionalTool,
-                    MagnifyTool, CrosshairsTool, ReferenceLinesTool
+                    CrosshairsTool, ReferenceLinesTool
                 ];
 
                 tools.forEach(toolClass => {
                     if (toolGroup && !toolGroup.hasTool(toolClass.toolName)) {
-                        console.log(`[CornerstoneManager] Adding tool: ${toolClass.toolName}`);
                         if (toolClass.toolName === ReferenceLinesTool.toolName) {
                             toolGroup.addTool(toolClass.toolName, {
                                 renderOutline: true,
                                 isVisible: true,
                             });
-                            // Set color for reference lines
                             toolGroup.setToolConfiguration(ReferenceLinesTool.toolName, {
                                 configuration: {
                                     fontFamily: 'Inter',
@@ -69,8 +72,6 @@ export const CornerstoneManager = () => {
                     }
                 });
 
-                // Default orientations and global tools
-                // Default orientations and global tools - NO PRIMARY MOUSE ASSIGNMENTS
                 toolGroup.setToolActive(StackScrollMouseWheelTool.toolName);
                 toolGroup.setToolActive(ReferenceLinesTool.toolName);
             }
@@ -81,14 +82,12 @@ export const CornerstoneManager = () => {
             // Nuclear Debug Helper
             (window as any).debugReferenceLines = () => {
                 const tg = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
-                const viewports = tg?.getViewportIds();
+                const viewportsIds = tg?.getViewportIds();
                 console.log('--- Reference Lines Diagnostic ---');
                 console.log('ToolGroup:', TOOL_GROUP_ID);
-                console.log('Active Tool:', tg?.getActivePrimaryMouseButtonTool());
-                console.log('Registered Viewports:', viewports);
-                console.log('RefLines Tool State:', tg?.getToolOptions(ReferenceLinesTool.toolName));
+                console.log('Registered Viewports:', viewportsIds);
 
-                viewports?.forEach(vpId => {
+                viewportsIds?.forEach(vpId => {
                     const vp = getRenderingEngine(RENDERING_ENGINE_ID)?.getViewport(vpId);
                     const sliceId = (vp as any).getCurrentImageId?.();
                     const metadata = metaData.get('imagePlaneModule', sliceId);
@@ -109,11 +108,60 @@ export const CornerstoneManager = () => {
             try {
                 const engine = getRenderingEngine(RENDERING_ENGINE_ID);
                 if (engine) engine.destroy();
-            } catch (e) {
-                // Ignore if already destroyed
-            }
+            } catch (e) { /* ignore */ }
         };
     }, []);
+
+    // Auto-Rotation Effect
+    useEffect(() => {
+        if (!isAutoRotating) {
+            if (rotationFrameRef.current) {
+                cancelAnimationFrame(rotationFrameRef.current);
+                rotationFrameRef.current = null;
+            }
+            return;
+        }
+
+        const engine = getRenderingEngine(RENDERING_ENGINE_ID);
+        if (!engine) return;
+
+        const rotate = () => {
+            const vpState = viewports[activeViewportIndex];
+            if (!vpState) return;
+
+            const viewport = engine.getViewport(vpState.id);
+            if (viewport && 'setCamera' in viewport) {
+                const camera = (viewport as any).getCamera();
+                if (camera) {
+                    const { position, focalPoint } = camera;
+                    const angle = 0.01; // ~0.6 degrees per frame
+                    const cosA = Math.cos(angle);
+                    const sinA = Math.sin(angle);
+
+                    const dx = position[0] - focalPoint[0];
+                    const dz = position[2] - focalPoint[2];
+
+                    const nextX = focalPoint[0] + dx * cosA - dz * sinA;
+                    const nextZ = focalPoint[2] + dx * sinA + dz * cosA;
+
+                    (viewport as any).setCamera({
+                        position: [nextX, position[1], nextZ]
+                    });
+                    viewport.render();
+                }
+            }
+            rotationFrameRef.current = requestAnimationFrame(rotate);
+        };
+
+        rotationFrameRef.current = requestAnimationFrame(rotate);
+
+        return () => {
+            if (rotationFrameRef.current) {
+                cancelAnimationFrame(rotationFrameRef.current);
+                rotationFrameRef.current = null;
+            }
+        };
+    }, [isAutoRotating, activeViewportIndex, viewports]);
 
     return null;
 };

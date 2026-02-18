@@ -129,8 +129,6 @@ function electronMetadataProvider(type: string, ...queries: any[]) {
             photometricInterpretation: mod.photometricInterpretation || 'MONOCHROME2',
             rows: mod.rows,
             columns: mod.columns,
-            rescaleIntercept: 0,
-            rescaleSlope: 1,
         };
     }
 
@@ -142,7 +140,13 @@ function electronMetadataProvider(type: string, ...queries: any[]) {
         };
     }
 
-    if (type === 'modalityLutModule') return metadata.modalityLutModule;
+    if (type === 'modalityLutModule') {
+        const mod = metadata.modalityLutModule || {};
+        return {
+            rescaleIntercept: mod.rescaleIntercept ?? 0,
+            rescaleSlope: mod.rescaleSlope ?? 1,
+        };
+    }
 
     // --- ★ Corrected: Modality information ---
     if (type === 'generalSeriesModule') {
