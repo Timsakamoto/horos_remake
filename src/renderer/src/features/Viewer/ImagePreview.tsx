@@ -19,15 +19,15 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({ seriesUid }) => {
 
         const fetchMeta = async () => {
             // Find series
-            const series = await db.T_Subseries.findOne(seriesUid).exec();
+            const series = await db.series.findOne(seriesUid).exec();
             if (!series) return;
 
             // Find study
-            const study = await db.T_Study.findOne(series.studyInstanceUID).exec();
+            const study = await db.studies.findOne(series.studyInstanceUID).exec();
             if (!study) return;
 
             // Find patient
-            const patient = await db.T_Patient.findOne(study.patientId).exec();
+            const patient = await db.patients.findOne(study.patientId).exec();
 
             setMeta({
                 patientName: patient?.patientName || 'Anonymous',
@@ -37,7 +37,7 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({ seriesUid }) => {
                 modality: series.modality,
                 seriesDescription: series.seriesDescription,
                 seriesNumber: series.seriesNumber,
-                numImages: await db.T_FilePath.count({ selector: { seriesInstanceUID: seriesUid } }).exec()
+                numImages: await db.images.count({ selector: { seriesInstanceUID: seriesUid } }).exec()
             });
         };
 

@@ -7,6 +7,7 @@ export const PACSPreferences: React.FC = () => {
     const {
         servers, setServers,
         localListener, setLocalListener, toggleListener,
+        verifyNode,
         error,
         debugLoggingEnabled, setDebugLogging,
         openLogFile,
@@ -19,8 +20,8 @@ export const PACSPreferences: React.FC = () => {
     const handleSaveServer = () => {
         if (!editServerData.name || !editServerData.aeTitle) return;
 
-        // AE Title Validation (DICOM Standard: max 16 chars, truncated if needed)
-        const sanitizedAet = editServerData.aeTitle.trim().toUpperCase().substring(0, 16);
+        // AE Title Validation (DICOM Standard: max 16 chars, trimmed)
+        const sanitizedAet = (editServerData.aeTitle || '').trim().substring(0, 16);
 
         if (isEditingServer === 'new') {
             const newServer: PACSServer = {
@@ -90,13 +91,13 @@ export const PACSPreferences: React.FC = () => {
                                     <div className="flex flex-col flex-1 px-2 border-r border-gray-200">
                                         <span className="text-[8px] font-black text-gray-400 uppercase">AE Title</span>
                                         <input
-                                            className="w-full py-0.5 text-xs font-mono bg-transparent outline-none uppercase placeholder-gray-300 focus:text-peregrine-accent"
+                                            className="w-full py-0.5 text-xs font-mono bg-transparent outline-none placeholder-gray-300 focus:text-peregrine-accent"
                                             value={localListener.aeTitle}
-                                            onChange={e => setLocalListener({ ...localListener, aeTitle: e.target.value.toUpperCase() })}
-                                            placeholder="AET"
+                                            onChange={e => setLocalListener({ ...localListener, aeTitle: e.target.value.substring(0, 16) })}
+                                            placeholder="aet"
                                         />
                                     </div>
-                                    <div className="flex flex-col px-2">
+                                    <div className="flex flex-col px-2 border-r border-gray-200">
                                         <span className="text-[8px] font-black text-gray-400 uppercase">Port</span>
                                         <input
                                             className="w-16 py-0.5 text-xs font-mono bg-transparent outline-none focus:text-peregrine-accent"
@@ -183,7 +184,14 @@ export const PACSPreferences: React.FC = () => {
                                             </div>
                                         </td>
                                         <td className="px-6 py-4 text-right pr-8">
-                                            <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <div className="flex justify-end gap-1 transition-opacity">
+                                                <button
+                                                    onClick={() => verifyNode(server)}
+                                                    title="Verify Connection (C-ECHO)"
+                                                    className="p-2 text-gray-400 hover:text-peregrine-accent hover:bg-blue-50 rounded-xl transition-colors"
+                                                >
+                                                    <Activity size={12} />
+                                                </button>
                                                 <button
                                                     onClick={() => { setIsEditingServer(server.id); setEditServerData(server); }}
                                                     className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors"
@@ -326,11 +334,14 @@ export const PACSPreferences: React.FC = () => {
                                     <div className="space-y-2">
                                         <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">AE Title</label>
                                         <input
-                                            className="w-full px-4 py-3 border border-gray-100 rounded-xl text-sm font-mono font-bold uppercase focus:border-peregrine-accent focus:ring-4 focus:ring-blue-500/10 outline-none bg-gray-50/50 focus:bg-white transition-all"
+                                            className="w-full px-4 py-3 border border-gray-100 rounded-xl text-sm font-mono font-bold focus:border-peregrine-accent focus:ring-4 focus:ring-blue-500/10 outline-none bg-gray-50/50 focus:bg-white transition-all"
                                             value={editServerData.aeTitle || ''}
-                                            onChange={e => setEditServerData({ ...editServerData, aeTitle: e.target.value.toUpperCase() })}
-                                            placeholder="REMOTE_AET"
+                                            onChange={e => setEditServerData({ ...editServerData, aeTitle: e.target.value.substring(0, 16) })}
+                                            placeholder="remote_aet"
                                         />
+                                        <p className="text-[9px] text-gray-400 font-medium leading-tight">
+                                            Max 16 chars. Uppercase is recommended for best compatibility.
+                                        </p>
                                     </div>
 
                                     {!editServerData.isDicomWeb ? (

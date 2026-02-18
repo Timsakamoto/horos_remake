@@ -27,6 +27,7 @@ interface PACSContextType {
     setServers: (servers: PACSServer[]) => void;
     activeServer: PACSServer | null;
     setActiveServer: (server: PACSServer) => void;
+    removeServer: (serverId: string) => void;
 
     localListener: LocalListenerSettings;
     setLocalListener: (settings: LocalListenerSettings) => void;
@@ -37,6 +38,7 @@ interface PACSContextType {
     search: (filters: any) => Promise<void>;
     retrieve: (studyInstanceUID: string) => Promise<boolean>;
     sendToPacs: (server: PACSServer, filePaths: string[]) => Promise<boolean>;
+    verifyNode: (server: PACSServer) => Promise<boolean>;
 
     activeJobs: PACSJob[];
     clearCompletedJobs: () => void;
@@ -209,6 +211,11 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
+    const removeServer = (serverId: string) => {
+        const nextServers = servers.filter(s => s.id !== serverId);
+        setServers(nextServers);
+    };
+
     const setLocalListener = (settings: LocalListenerSettings) => {
         setLocalListenerState(prev => ({ ...prev, ...settings }));
     };
@@ -220,7 +227,7 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
                 setLocalListenerState(prev => ({ ...prev, isRunning: false }));
             }
         } else {
-            const success = await window.electron.pacs.startListener(localListener.aeTitle, localListener.port);
+            const success = await window.electron.pacs.startListener(localListener.aeTitle.trim(), localListener.port);
             if (success) {
                 setLocalListenerState(prev => ({ ...prev, isRunning: true }));
             } else {
@@ -240,7 +247,7 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
 
         try {
             const client = new PACSClient(activeServer);
-            const data = await client.searchStudies(filters);
+            const data = await client.searchStudies(filters, localListener.aeTitle);
 
             setResults(data);
         } catch (err: any) {
@@ -258,7 +265,7 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
             const client = new PACSClient(activeServer);
             const destinationAet = localListener.aeTitle;
             // Initiate move (Main process creates job)
-            return await client.retrieveStudy(studyInstanceUID, destinationAet);
+            return await client.retrieveStudy(studyInstanceUID, destinationAet, localListener.aeTitle);
         } catch (err: any) {
             setError(err.message || 'Retrieve Failed');
             return false;
@@ -268,9 +275,29 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
     const sendToPacs = async (server: PACSServer, filePaths: string[]): Promise<boolean> => {
         try {
             const client = new PACSClient(server);
-            return await client.sendImages(filePaths);
+            return await client.sendImages(filePaths, localListener.aeTitle);
         } catch (err: any) {
             setError(err.message || 'Send Failed');
+            return false;
+        }
+    };
+
+    const verifyNode = async (server: PACSServer): Promise<boolean> => {
+        try {
+            const client = new PACSClient(server);
+            const success = await client.echo(localListener.aeTitle);
+
+            // サーバーリストのステータスを更新
+            setServersState(prev => prev.map(s =>
+                s.id === server.id ? { ...s, status: success ? 'online' : 'offline' } : s
+            ));
+
+            return success;
+        } catch (err) {
+            console.error('PACSProvider: Echo failed:', err);
+            setServersState(prev => prev.map(s =>
+                s.id === server.id ? { ...s, status: 'offline' } : s
+            ));
             return false;
         }
     };
@@ -300,6 +327,7 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
             setServers,
             activeServer,
             setActiveServer,
+            removeServer,
             localListener,
             setLocalListener,
             toggleListener,
@@ -308,6 +336,7 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
             search,
             retrieve,
             sendToPacs,
+            verifyNode,
             activeJobs,
             clearCompletedJobs,
             debugLoggingEnabled,

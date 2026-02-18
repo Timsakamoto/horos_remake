@@ -11,6 +11,7 @@ interface PACSNode {
     aeTitle: string;
     address: string;
     port: number;
+    callingAet?: string;
 }
 
 export enum LogLevel {
@@ -200,10 +201,25 @@ export class DICOMService {
         const binPath = this.getDcmtkBinPath('echoscu');
         if (!binPath) return false;
 
-        const args = ['-v', '-aet', this.currentAeTitle, '-aec', node.aeTitle, node.address, node.port.toString()];
+        const callingAet = node.callingAet || this.currentAeTitle;
+        const args = ['-v', '-aet', callingAet, '-aec', node.aeTitle, node.address, node.port.toString()];
 
         return new Promise((resolve) => {
             const process = spawn(binPath, args);
+
+            process.stdout?.on('data', (data) => {
+                const msg = data.toString().trim();
+                if (msg) this.logInfo(`[echoscu] ${msg}`);
+            });
+
+            process.stderr?.on('data', (data) => {
+                const msg = data.toString().trim();
+                if (msg) {
+                    if (msg.includes('E:')) this.logError(`[echoscu] ${msg}`);
+                    else if (msg.includes('W:')) this.logWarn(`[echoscu] ${msg}`);
+                    else this.logInfo(`[echoscu] ${msg}`);
+                }
+            });
 
             process.on('close', (code) => {
                 if (code === 0) {
@@ -226,9 +242,10 @@ export class DICOMService {
         const binPath = this.getDcmtkBinPath('findscu');
         if (!binPath) return [];
 
+        const callingAet = node.callingAet || this.currentAeTitle;
         const args = [
             '-v',
-            '-aet', this.currentAeTitle,
+            '-aet', callingAet,
             '-aec', node.aeTitle,
             '-P', // Patient Root Information Model
             '-k', `QueryRetrieveLevel=${level}`,
@@ -263,10 +280,18 @@ export class DICOMService {
         return new Promise((resolve, reject) => {
             const process = spawn(binPath, args);
             let stdout = '';
-            let stderr = '';
 
-            process.stdout.on('data', (data) => stdout += data.toString());
-            process.stderr.on('data', (data) => stderr += data.toString());
+            process.stdout.on('data', (data) => {
+                const msg = data.toString();
+                stdout += msg;
+                // findscu -X outputs XML, but if -v is used, other info might be there
+                this.logInfo(`[findscu] ${msg.trim()}`);
+            });
+
+            process.stderr.on('data', (data) => {
+                const msg = data.toString().trim();
+                if (msg) this.logWarn(`[findscu stderr] ${msg}`);
+            });
 
             process.on('close', async (code) => {
                 if (code === 0) {
@@ -280,7 +305,6 @@ export class DICOMService {
                     }
                 } else {
                     this.logWarn(`C-FIND Failed (Code: ${code})`);
-                    this.logWarn(`Stderr: ${stderr}`);
                     resolve([]);
                 }
             });
@@ -296,9 +320,10 @@ export class DICOMService {
         const binPath = this.getDcmtkBinPath('movescu');
         if (!binPath) return false;
 
+        const callingAet = node.callingAet || this.currentAeTitle;
         const args = [
             '-v',
-            '-aet', this.currentAeTitle,
+            '-aet', callingAet,
             '-aec', node.aeTitle,
             '-aem', destinationAet,
             '-P', // Patient Root
@@ -320,19 +345,20 @@ export class DICOMService {
             const process = spawn(binPath, args);
 
             process.stdout.on('data', (data) => {
-                const msg = data.toString();
+                const msg = data.toString().trim();
                 // Basic progress parsing (Parsing standard movescu output)
                 if (msg.includes('Remaining:')) {
-                    // Extract Remaining and Completed
-                    // This is verbose and might need regex adjustment based on exact output version
-                    if (onProgress) onProgress(50); // Fake progress for now until accurate parsing
+                    if (onProgress) onProgress(50); // Fake progress
                 }
+                if (msg) this.logInfo(`[movescu] ${msg}`);
             });
 
             process.stderr.on('data', (data) => {
-                const msg = data.toString();
-                if (msg.includes('E:')) this.logError(`movescu: ${msg}`);
-                else this.logInfo(`movescu: ${msg}`);
+                const msg = data.toString().trim();
+                if (msg) {
+                    if (msg.includes('E:')) this.logError(`[movescu] ${msg}`);
+                    else this.logWarn(`[movescu] ${msg}`);
+                }
             });
 
             process.on('close', (code) => {
@@ -356,10 +382,11 @@ export class DICOMService {
         const binPath = this.getDcmtkBinPath('storescu');
         if (!binPath) return false;
 
+        const callingAet = node.callingAet || this.currentAeTitle;
         // storescu [options] peer port dcmfile-in...
         const args = [
             '-v',
-            '-aet', this.currentAeTitle,
+            '-aet', callingAet,
             '-aec', node.aeTitle,
             node.address,
             node.port.toString(),
@@ -373,16 +400,19 @@ export class DICOMService {
             let totalFiles = filePaths.length;
             let currentFile = 0;
 
-            // storescu outputs one line per file usually
-            process.stdout.on('data', () => {
-                // Approximate progress based on output activity
+            process.stdout.on('data', (data) => {
+                const msg = data.toString().trim();
                 currentFile++;
                 if (onProgress) onProgress(Math.round((currentFile / totalFiles) * 100));
+                if (msg) this.logInfo(`[storescu] ${msg}`);
             });
 
             process.stderr.on('data', (data) => {
-                const msg = data.toString();
-                if (msg.includes('E:')) this.logError(`storescu: ${msg}`);
+                const msg = data.toString().trim();
+                if (msg) {
+                    if (msg.includes('E:')) this.logError(`[storescu] ${msg}`);
+                    else this.logWarn(`[storescu] ${msg}`);
+                }
             });
 
             process.on('close', (code) => {

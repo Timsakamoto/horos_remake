@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
     LayoutGrid,
     Layers,
@@ -24,7 +24,9 @@ import {
     AlignJustify,
     Columns,
     PanelRight,
+    Send
 } from 'lucide-react';
+import { useDatabase } from '../Database/DatabaseProvider';
 import { CLUT_PRESETS } from './CLUTPresets';
 import { GridSelector } from './GridSelector';
 
@@ -118,6 +120,8 @@ export const Toolbar = ({
     onPresetSelect,
     activeViewportOrientation,
 }: Props) => {
+    const { checkedItems, setShowSendModal } = useDatabase();
+    const selectedCount = useMemo(() => checkedItems.size, [checkedItems]);
     // console.log('Toolbar Render:', { activeView, activeViewportOrientation });
 
     const [showMPRControls, setShowMPRControls] = useState(false);
@@ -274,6 +278,31 @@ export const Toolbar = ({
                         >
                             <Layers size={20} strokeWidth={2.5} />
                             <span className="text-[8px] font-black uppercase tracking-widest drop-shadow-sm">View</span>
+                        </button>
+
+                        <div className="h-10 w-[1px] bg-[#000000]/10 mx-1" />
+
+                        {/* Send Button */}
+                        <button
+                            onClick={() => setShowSendModal(true)}
+                            disabled={selectedCount === 0}
+                            className={`
+                                group flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-all duration-300 gap-1 border shadow-sm
+                                ${selectedCount > 0
+                                    ? 'bg-white hover:bg-gray-50 text-peregrine-accent border-[#c0c0c0] hover:scale-105 active:scale-95'
+                                    : 'bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed opacity-50'}
+                            `}
+                            title={selectedCount > 0 ? `Send ${selectedCount} selected items to PACS` : 'Select items to send'}
+                        >
+                            <div className={`p-0.5 ${selectedCount > 0 ? 'animate-pulse' : ''}`}>
+                                <Send size={20} strokeWidth={2.5} />
+                            </div>
+                            <span className="text-[8px] font-black uppercase tracking-widest">Send</span>
+                            {selectedCount > 0 && (
+                                <div className="absolute -top-1 -right-1 bg-peregrine-accent text-white text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow-md animate-in zoom-in duration-200">
+                                    {selectedCount}
+                                </div>
+                            )}
                         </button>
                     </div>
 

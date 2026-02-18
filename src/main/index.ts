@@ -346,8 +346,16 @@ app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
 })
 
+import { WatcherService } from './WatcherService'
+
 app.whenReady().then(() => {
     new DICOMService();
+    const watcher = new WatcherService();
+
+    // Default watch directory
+    const storagePath = process.env.DICOM_STORAGE_PATH || join(app.getPath('userData'), 'dicom_storage');
+    watcher.startWatching(storagePath);
+
     createDefaultMenu();
     createWindow()
 })

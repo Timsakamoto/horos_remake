@@ -39,9 +39,9 @@ export const runDatabaseCleanup = async (
     try {
         // Step 1: Remove orphaned images (missing parent series)
         onProgress?.('Checking image records...', 10);
-        const allImages = await db.T_FilePath.find().exec();
+        const allImages = await db.images.find().exec();
         const allSeriesUIDs = new Set(
-            (await db.T_Subseries.find().exec()).map(s => s.seriesInstanceUID)
+            (await db.series.find().exec()).map(s => s.seriesInstanceUID)
         );
 
         for (const img of allImages) {
@@ -57,16 +57,16 @@ export const runDatabaseCleanup = async (
 
         // Step 2: Remove orphaned series (missing parent study)
         onProgress?.('Checking series records...', 30);
-        const allSeries = await db.T_Subseries.find().exec();
+        const allSeries = await db.series.find().exec();
         const allStudyUIDs = new Set(
-            (await db.T_Study.find().exec()).map(s => s.studyInstanceUID)
+            (await db.studies.find().exec()).map(s => s.studyInstanceUID)
         );
 
         for (const series of allSeries) {
             if (!allStudyUIDs.has(series.studyInstanceUID)) {
                 try {
                     // Also remove child images
-                    const childImages = await db.T_FilePath.find({
+                    const childImages = await db.images.find({
                         selector: { seriesInstanceUID: series.seriesInstanceUID }
                     }).exec();
                     for (const img of childImages) {
@@ -83,20 +83,20 @@ export const runDatabaseCleanup = async (
 
         // Step 3: Remove orphaned studies (missing parent patient)
         onProgress?.('Checking study records...', 50);
-        const allStudies = await db.T_Study.find().exec();
+        const allStudies = await db.studies.find().exec();
         const allPatientIDs = new Set(
-            (await db.T_Patient.find().exec()).map(p => p.id)
+            (await db.patients.find().exec()).map(p => p.id)
         );
 
         for (const study of allStudies) {
             if (!allPatientIDs.has(study.patientId)) {
                 try {
                     // Also remove child series and images
-                    const childSeries = await db.T_Subseries.find({
+                    const childSeries = await db.series.find({
                         selector: { studyInstanceUID: study.studyInstanceUID }
                     }).exec();
                     for (const s of childSeries) {
-                        const childImages = await db.T_FilePath.find({
+                        const childImages = await db.images.find({
                             selector: { seriesInstanceUID: s.seriesInstanceUID }
                         }).exec();
                         for (const img of childImages) {
@@ -116,7 +116,7 @@ export const runDatabaseCleanup = async (
 
         // Step 4: Check for missing files
         onProgress?.('Verifying file references...', 70);
-        const remainingImages = await db.T_FilePath.find().exec();
+        const remainingImages = await db.images.find().exec();
         for (const img of remainingImages) {
             try {
                 // @ts-ignore - Electron preload API
@@ -129,11 +129,16 @@ export const runDatabaseCleanup = async (
             }
         }
 
-        // Step 5: Update study/series counts
-        onProgress?.('Updating record counts...', 90);
+        // Step 5: Remove empty series (0 images)
+        onProgress?.('Checking for empty series...', 85);
+        const removedEmptyCount = await removeEmptySeries(db);
+        report.totalCleaned += removedEmptyCount;
+
+        // Step 6: Update study/series counts
+        onProgress?.('Updating record counts...', 95);
         await updateRecordCounts(db);
 
-        report.totalCleaned = report.orphanedImages + report.orphanedSeries + report.orphanedStudies;
+        report.totalCleaned += report.orphanedImages + report.orphanedSeries + report.orphanedStudies;
         onProgress?.('Cleanup complete', 100);
 
     } catch (err: any) {
@@ -147,32 +152,57 @@ export const runDatabaseCleanup = async (
  * Update numberOfStudyRelatedSeries/Instances and numberOfSeriesRelatedInstances
  */
 export const updateRecordCounts = async (db: AntigravityDatabase): Promise<void> => {
-    // Update series instance counts
-    const allSeries = await db.T_Subseries.find().exec();
-    for (const series of allSeries) {
-        const imageCount = await db.T_FilePath.count({
-            selector: { seriesInstanceUID: series.seriesInstanceUID }
-        }).exec();
-        await series.incrementalPatch({
-            numberOfSeriesRelatedInstances: imageCount
-        });
+    // 1. Update series instance counts in batches
+    const allSeries = await db.series.find().exec();
+    const seriesChunkSize = 25;
+    for (let i = 0; i < allSeries.length; i += seriesChunkSize) {
+        const chunk = allSeries.slice(i, i + seriesChunkSize);
+        await Promise.all(chunk.map(async (series) => {
+            const imageCount = await db.images.count({
+                selector: { seriesInstanceUID: series.seriesInstanceUID }
+            }).exec();
+            return series.incrementalPatch({
+                numberOfSeriesRelatedInstances: imageCount
+            });
+        }));
     }
 
-    // Update study series/instance counts
-    const allStudies = await db.T_Study.find().exec();
-    for (const study of allStudies) {
-        const seriesDocs = await db.T_Subseries.find({
-            selector: { studyInstanceUID: study.studyInstanceUID }
+    // 2. Update study series/instance counts in batches
+    const allStudies = await db.studies.find().exec();
+    const studyChunkSize = 10;
+    for (let i = 0; i < allStudies.length; i += studyChunkSize) {
+        const chunk = allStudies.slice(i, i + studyChunkSize);
+        await Promise.all(chunk.map(async (study) => {
+            const seriesDocs = await db.series.find({
+                selector: { studyInstanceUID: study.studyInstanceUID }
+            }).exec();
+
+            let totalInstances = 0;
+            for (const s of seriesDocs) {
+                totalInstances += s.numberOfSeriesRelatedInstances || 0;
+            }
+
+            return study.incrementalPatch({
+                numberOfStudyRelatedSeries: seriesDocs.length,
+                numberOfStudyRelatedInstances: totalInstances
+            });
+        }));
+    }
+
+    // 3. Update patient instance counts
+    const allPatients = await db.patients.find().exec();
+    for (const patient of allPatients) {
+        const studies = await db.studies.find({
+            selector: { patientId: patient.id }
         }).exec();
 
-        let totalInstances = 0;
-        for (const s of seriesDocs) {
-            totalInstances += s.numberOfSeriesRelatedInstances || 0;
+        let totalPatientInstances = 0;
+        for (const st of studies) {
+            totalPatientInstances += st.numberOfStudyRelatedInstances || 0;
         }
 
-        await study.incrementalPatch({
-            numberOfStudyRelatedSeries: seriesDocs.length,
-            numberOfStudyRelatedInstances: totalInstances
+        await patient.incrementalPatch({
+            numberOfPatientRelatedInstances: totalPatientInstances
         });
     }
 };
@@ -182,13 +212,30 @@ export const updateRecordCounts = async (db: AntigravityDatabase): Promise<void>
  */
 export const removeEmptyPatients = async (db: AntigravityDatabase): Promise<number> => {
     let removed = 0;
-    const patients = await db.T_Patient.find().exec();
+    const patients = await db.patients.find().exec();
     for (const patient of patients) {
-        const studyCount = await db.T_Study.count({
+        const studyCount = await db.studies.count({
             selector: { patientId: patient.id }
         }).exec();
         if (studyCount === 0) {
             await patient.remove();
+            removed++;
+        }
+    }
+    return removed;
+};
+/**
+ * Remove any series that have 0 image records
+ */
+export const removeEmptySeries = async (db: AntigravityDatabase): Promise<number> => {
+    let removed = 0;
+    const series = await db.series.find().exec();
+    for (const s of series) {
+        const imageCount = await db.images.count({
+            selector: { seriesInstanceUID: s.seriesInstanceUID }
+        }).exec();
+        if (imageCount === 0) {
+            await s.remove();
             removed++;
         }
     }

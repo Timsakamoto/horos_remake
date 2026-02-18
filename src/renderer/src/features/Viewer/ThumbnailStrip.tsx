@@ -25,7 +25,7 @@ interface Props {
 }
 
 export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUid, defaultCols = 6, fixedCols }: Props) => {
-    const { db } = useDatabase();
+    const { db, thumbnailMap } = useDatabase();
     const { thumbnailCols: savedCols, setThumbnailCols: setSavedCols, databasePath } = useSettings();
     const [cols, setCols] = useState(fixedCols || savedCols || defaultCols);
     const [seriesList, setSeriesList] = useState<SeriesSummary[]>([]);
@@ -65,16 +65,16 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
             // 1. Fetch relevant studies
             let studies: any[] = [];
             if (studyUid) {
-                const s = await db.T_Study.findOne({ selector: { studyInstanceUID: studyUid } }).exec();
+                const s = await db.studies.findOne({ selector: { studyInstanceUID: studyUid } }).exec();
                 if (s) studies = [s];
                 else {
-                    studies = await db.T_Study.find({
+                    studies = await db.studies.find({
                         selector: { patientId },
                         sort: [{ studyDate: 'desc' }]
                     }).exec();
                 }
             } else {
-                studies = await db.T_Study.find({
+                studies = await db.studies.find({
                     selector: { patientId },
                     sort: [{ studyDate: 'desc' }]
                 }).exec();
@@ -88,10 +88,13 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
 
             // 2. Fetch all series for all target studies at once
             const studyUids = studies.map(st => st.studyInstanceUID);
-            const seriesDocs = await db.T_Subseries.find({
+            const seriesDocsRaw = await db.series.find({
                 selector: { studyInstanceUID: { $in: studyUids } },
                 sort: [{ seriesNumber: 'asc' }]
             }).exec();
+
+            // Filter out empty series
+            const seriesDocs = seriesDocsRaw.filter(s => (s.numberOfSeriesRelatedInstances || 0) > 0);
 
             console.log(`ThumbnailStrip: Processing ${seriesDocs.length} series in parallel...`);
 
@@ -101,7 +104,7 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                 const count = s.numberOfSeriesRelatedInstances || 0;
                 const middleIndex = Math.floor(count / 2);
 
-                let firstImageResults = await db.T_FilePath.find({
+                let firstImageResults = await db.images.find({
                     selector: { seriesInstanceUID: s.seriesInstanceUID },
                     sort: [{ instanceNumber: 'asc' }],
                     limit: 1,
@@ -111,7 +114,7 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                 // Fallback for safety
                 if (firstImageResults.length === 0 && middleIndex > 0) {
                     console.warn(`[ThumbnailStrip] Middle image fetch empty for ${s.seriesInstanceUID}, falling back to first.`);
-                    firstImageResults = await db.T_FilePath.find({
+                    firstImageResults = await db.images.find({
                         selector: { seriesInstanceUID: s.seriesInstanceUID },
                         sort: [{ instanceNumber: 'asc' }],
                         limit: 1
@@ -249,7 +252,13 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                                 : 'bg-black/80 border-white/5 group-hover:border-white/20'
                             }
                         `}>
-                            {series.thumbnailImageId ? (
+                            {thumbnailMap[series.seriesInstanceUID] ? (
+                                <img
+                                    src={thumbnailMap[series.seriesInstanceUID]}
+                                    alt={series.seriesDescription}
+                                    className="w-full h-full object-contain"
+                                />
+                            ) : series.thumbnailImageId ? (
                                 <Viewport
                                     viewportId={`thumb-${series.seriesInstanceUID}`}
                                     renderingEngineId="peregrine-engine"
@@ -330,7 +339,7 @@ export const ThumbnailStrip = ({ patientId, studyUid, onSelect, selectedSeriesUi
                                     onClick={async () => {
                                         if (selectedSeriesForSend && db) {
                                             // Get file paths for series
-                                            const files = await db.T_FilePath.find({ selector: { seriesInstanceUID: selectedSeriesForSend } }).exec();
+                                            const files = await db.images.find({ selector: { seriesInstanceUID: selectedSeriesForSend } }).exec();
                                             const filePaths = files.map(f => f.filePath);
                                             sendToPacs(server, filePaths);
                                             setShowSendModal(false);

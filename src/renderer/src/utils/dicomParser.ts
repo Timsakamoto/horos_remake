@@ -57,6 +57,7 @@ export interface DicomMetadata {
     temporalPositionIndex?: number;
     stackID?: string;
     acquisitionTime?: number;
+    frameOfReferenceUID?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,8 +94,9 @@ const stringifyPN = (val: any): string => {
     if (typeof val === 'string') return val;
     if (typeof val === 'object') {
         // dcmjs naturalizeDataset format: { Alphabetic: "...", Ideographic: "...", Phonetic: "..." }
-        if (val.Alphabetic) return String(val.Alphabetic);
+        // For Japanese users, Ideographic (Kanji) is usually preferred over Alphabetic (Romaji).
         if (val.Ideographic) return String(val.Ideographic);
+        if (val.Alphabetic) return String(val.Alphabetic);
         if (val.Phonetic) return String(val.Phonetic);
         // Some older dcmjs versions or edge cases: { value: [{...}] }
         if (val.value && Array.isArray(val.value) && val.value[0]) {
@@ -295,6 +297,7 @@ export const parseDicombuffer = (buffer: ArrayBuffer | Uint8Array): DicomMetadat
                 temporalPositionIndex: safeNumber(get('TemporalPositionIndex')),
                 stackID: safeString(get('StackID')),
                 acquisitionTime: safeNumber(get('AcquisitionTime')),
+                frameOfReferenceUID: safeString(get('FrameOfReferenceUID')),
             };
 
             // Debug Log for B-Value Search (Temporary)
@@ -348,10 +351,14 @@ const parseWithDicomParser = (buffer: ArrayBuffer | Uint8Array): DicomMetadata |
         let encoding = 'utf-8'; // default
         if (charSets.some(s => s.includes('ISO 2022 IR 87') || s.includes('ISO 2022 IR 13'))) {
             encoding = 'iso-2022-jp';
+        } else if (charSets.includes('ISO_IR 13')) {
+            encoding = 'shift-jis';
         } else if (charSets.includes('ISO_IR 100')) {
             encoding = 'iso-8859-1';
         } else if (charSets.includes('ISO_IR 192')) {
             encoding = 'utf-8';
+        } else if (charSets.includes('GB18030')) {
+            encoding = 'gb18030';
         }
 
         const decoder = new TextDecoder(encoding);
@@ -465,6 +472,7 @@ const parseWithDicomParser = (buffer: ArrayBuffer | Uint8Array): DicomMetadata |
             temporalPositionIndex: getNumber('x00209128'),
             stackID: getString('x00209056'),
             acquisitionTime: getNumber('x00080032'),
+            frameOfReferenceUID: getString('x00200052'),
         };
     } catch (e) {
         console.error('DICOM Parser Fallback failed:', e);

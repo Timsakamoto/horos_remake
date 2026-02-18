@@ -1,31 +1,51 @@
 import { createRxDatabase, RxDatabase, RxCollection, addRxPlugin } from 'rxdb';
 import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
 import { RxDBMigrationSchemaPlugin } from 'rxdb/plugins/migration-schema';
+import { RxDBUpdatePlugin } from 'rxdb/plugins/update';
+import { RxDBQueryBuilderPlugin } from 'rxdb/plugins/query-builder';
+import { RxDBLocalDocumentsPlugin } from 'rxdb/plugins/local-documents';
+import { RxDBLeaderElectionPlugin } from 'rxdb/plugins/leader-election';
+import { RxDBDevModePlugin } from 'rxdb/plugins/dev-mode';
 import { PatientSchema, PatientDocType } from './schema/patient.schema';
 import { StudySchema, StudyDocType } from './schema/study.schema';
 import { SeriesSchema, SeriesDocType } from './schema/series.schema';
 import { ImageSchema, ImageDocType } from './schema/image.schema';
+import { SmartFolderSchema, SmartFolderDocType } from './schema/smartFolder.schema';
+import { ThumbnailSchema, ThumbnailDocType } from './schema/thumbnail.schema';
 
 // Add mandatory plugins
 addRxPlugin(RxDBMigrationSchemaPlugin);
+addRxPlugin(RxDBUpdatePlugin);
+addRxPlugin(RxDBQueryBuilderPlugin);
+addRxPlugin(RxDBLocalDocumentsPlugin);
+addRxPlugin(RxDBLeaderElectionPlugin);
+
+// dev-mode plugin should only be added in development
+if (process.env.NODE_ENV === 'development') {
+    addRxPlugin(RxDBDevModePlugin);
+}
 
 export type AntigravityDatabaseCollections = {
-    T_Patient: RxCollection<PatientDocType>;
-    T_Study: RxCollection<StudyDocType>;
-    T_Subseries: RxCollection<SeriesDocType>;
-    T_FilePath: RxCollection<ImageDocType>;
+    patients: RxCollection<PatientDocType>;
+    studies: RxCollection<StudyDocType>;
+    series: RxCollection<SeriesDocType>;
+    images: RxCollection<ImageDocType>;
+    smart_folders: RxCollection<SmartFolderDocType>;
+    thumbnails: RxCollection<ThumbnailDocType>;
 };
 
 export type AntigravityDatabase = RxDatabase<AntigravityDatabaseCollections>;
 
 let dbPromise: Promise<AntigravityDatabase> | null = null;
 
+const DB_NAME = 'antigravity_v2';
+
 const _create = async (): Promise<AntigravityDatabase> => {
     console.log('DatabaseService: Creating database...');
 
     try {
         const db = await createRxDatabase<AntigravityDatabaseCollections>({
-            name: 'antigravitydb',
+            name: DB_NAME,
             storage: getRxStorageDexie(),
             ignoreDuplicate: true
         });
@@ -33,17 +53,29 @@ const _create = async (): Promise<AntigravityDatabase> => {
         console.log('DatabaseService: Adding collections...');
 
         await db.addCollections({
-            T_Patient: {
+            patients: {
                 schema: PatientSchema,
                 migrationStrategies: {
                     1: (oldDoc) => ({
                         ...oldDoc,
                         patientNameNormalized: String(oldDoc.patientName || '').toLowerCase()
                     }),
-                    2: (oldDoc) => oldDoc // No change needed for existing records, but schema version bumped
+                    2: (oldDoc) => oldDoc,
+                    3: (oldDoc) => oldDoc,
+                    4: (oldDoc) => oldDoc,
+                    5: (oldDoc) => ({
+                        ...oldDoc,
+                        numberOfPatientRelatedInstances: 0
+                    }),
+                    6: (oldDoc) => oldDoc,
+                    7: (oldDoc) => oldDoc,
+                    8: (oldDoc) => ({
+                        ...oldDoc,
+                        lastImportDateTime: new Date().toISOString()
+                    })
                 }
             },
-            T_Study: {
+            studies: {
                 schema: StudySchema,
                 migrationStrategies: {
                     1: (oldDoc) => ({
@@ -51,10 +83,18 @@ const _create = async (): Promise<AntigravityDatabase> => {
                         numberOfStudyRelatedSeries: 0,
                         numberOfStudyRelatedInstances: 0,
                         studyDescriptionNormalized: (oldDoc.studyDescription || '').toLowerCase()
-                    })
+                    }),
+                    2: (oldDoc) => oldDoc,
+                    3: (oldDoc) => oldDoc,
+                    4: (oldDoc) => oldDoc,
+                    5: (oldDoc) => oldDoc,
+                    6: (oldDoc) => oldDoc,
+                    7: (oldDoc) => oldDoc,
+                    8: (oldDoc) => oldDoc,
+                    9: (oldDoc) => oldDoc
                 }
             },
-            T_Subseries: {
+            series: {
                 schema: SeriesSchema,
                 migrationStrategies: {
                     1: (oldDoc) => ({
@@ -65,11 +105,24 @@ const _create = async (): Promise<AntigravityDatabase> => {
                     }),
                     2: (oldDoc) => ({
                         ...oldDoc,
-                        dicomSeriesInstanceUID: oldDoc.seriesInstanceUID // Before split, they were same
-                    })
+                        dicomSeriesInstanceUID: oldDoc.seriesInstanceUID
+                    }),
+                    3: (oldDoc) => ({
+                        ...oldDoc,
+                        frameOfReferenceUID: undefined
+                    }),
+                    4: (oldDoc) => oldDoc,
+                    5: (oldDoc) => oldDoc,
+                    6: (oldDoc) => oldDoc,
+                    7: (oldDoc) => ({
+                        ...oldDoc,
+                        fusionPairId: undefined
+                    }),
+                    8: (oldDoc) => oldDoc,
+                    9: (oldDoc) => oldDoc
                 }
             },
-            T_FilePath: {
+            images: {
                 schema: ImageSchema,
                 migrationStrategies: {
                     1: (oldDoc) => oldDoc,
@@ -96,8 +149,22 @@ const _create = async (): Promise<AntigravityDatabase> => {
                         imageType: '',
                         sequenceName: '',
                         diffusionBValue: undefined
-                    })
+                    }),
+                    7: (oldDoc) => ({
+                        ...oldDoc,
+                        frameOfReferenceUID: undefined
+                    }),
+                    8: (oldDoc) => oldDoc,
+                    9: (oldDoc) => oldDoc,
+                    10: (oldDoc) => oldDoc,
+                    11: (oldDoc) => oldDoc
                 }
+            },
+            smart_folders: {
+                schema: SmartFolderSchema
+            },
+            thumbnails: {
+                schema: ThumbnailSchema
             }
         });
 
@@ -117,7 +184,6 @@ export const getDatabase = (): Promise<AntigravityDatabase> => {
 };
 
 export const removeDatabase = async () => {
-    const DB_NAME = 'antigravitydb';
     const { removeRxDatabase } = await import('rxdb');
 
     // 1. Try to destroy active connection

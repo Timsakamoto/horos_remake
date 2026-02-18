@@ -39,8 +39,8 @@ export const SettingsDialog: React.FC = () => {
                 </div>
 
                 <div className="flex flex-1 overflow-hidden">
-                    {/* Sidebar - Golden Ratio (~38.2% of typical 1100-1200px) */}
-                    <div className="w-[320px] lg:w-[382px] bg-gray-50 border-r border-gray-100 p-6 space-y-2 flex flex-col shrink-0">
+                    {/* Sidebar - Narrower for more content space */}
+                    <div className="w-[220px] lg:w-[240px] bg-gray-50 border-r border-gray-100 p-6 space-y-2 flex flex-col shrink-0">
                         <div className="mb-4">
                             <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] px-3">Configuration</h2>
                         </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronRight, ChevronDown, User, Calendar, Database, Activity, Trash2, Search, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, User, Calendar, Database, Trash2, Search, X, Layers, Bookmark } from 'lucide-react';
 import { useDatabase } from './DatabaseProvider';
 import { usePACS } from '../PACS/PACSProvider'; // Import types
 
@@ -10,6 +10,7 @@ interface DatabaseTableProps {
     selectedPatientId: string | null;
     selectedStudyUid: string | null;
     selectedSeriesUid: string | null;
+    saveSmartFolder: (name: string, icon?: string) => Promise<void>;
 }
 
 export const DatabaseTable: React.FC<DatabaseTableProps> = ({
@@ -18,7 +19,8 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
     onSeriesSelect,
     selectedPatientId,
     selectedStudyUid,
-    selectedSeriesUid
+    selectedSeriesUid,
+    saveSmartFolder
 }) => {
     const formatDICOMDate = (da: string | undefined): string => {
         if (!da || da === '-') return '-';
@@ -27,7 +29,10 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
         return `${clean.substring(0, 4)}/${clean.substring(4, 6)}/${clean.substring(6, 8)}`;
     };
 
-    const { patients, db, requestDelete, lastDeletionTime, searchFilters, setSearchFilters, availableModalities, sortConfig, setSortConfig } = useDatabase();
+    const {
+        patients, db, requestDelete, lastDeletionTime, searchFilters, setSearchFilters,
+        availableModalities, sortConfig, setSortConfig, checkedItems, toggleSelection
+    } = useDatabase();
     const [expandedPatients, setExpandedPatients] = useState<Set<string>>(new Set());
     const [expandedStudies, setExpandedStudies] = useState<Set<string>>(new Set());
     const [studiesMap, setStudiesMap] = useState<Record<string, any[]>>({});
@@ -35,10 +40,8 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
     const [hoveredCell, setHoveredCell] = useState<{ type: string; value: string } | null>(null);
     const [showCopyFeedback, setShowCopyFeedback] = useState(false);
 
-    // Send to PACS State
-    const { servers, sendToPacs, localListener } = usePACS();
-    const [sendMenu, setSendMenu] = useState<{ x: number, y: number, type: 'study' | 'series', uid: string } | null>(null);
-    const [showSendModal, setShowSendModal] = useState(false);
+    // PACS State
+    const { localListener } = usePACS();
 
     const handleSort = (key: string) => {
         if (sortConfig.key === key) {
@@ -63,38 +66,48 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
         if (!patient) return;
 
         if (patient._isStudy) {
-            const seriesDocs = await db.T_Subseries.find({ selector: { studyInstanceUID: patientId } }).exec();
+            const seriesDocs = await db.series.find({ selector: { studyInstanceUID: patientId } }).exec();
             const seriesWithCounts = await Promise.all(seriesDocs.map(async (s) => {
-                const count = await db.T_FilePath.count({ selector: { seriesInstanceUID: s.seriesInstanceUID } }).exec();
+                const count = await db.images.count({ selector: { seriesInstanceUID: s.seriesInstanceUID } }).exec();
                 return { ...s.toJSON(), imageCount: count };
             }));
             setStudiesMap(prev => ({ ...prev, [patientId]: seriesWithCounts }));
         } else {
-            const studies = await db.T_Study.find({
+            const studies = await db.studies.find({
                 selector: { patientId },
                 sort: [{ ImportDateTime: 'desc' }]
             }).exec();
             // Fallback institutionName from patient if missing in study
-            const patientDoc = await db.T_Patient.findOne(patientId).exec();
-            const mappedStudies = studies.map(s => {
+            const patientDoc = await db.patients.findOne(patientId).exec();
+            const mappedStudies = await Promise.all(studies.map(async (s) => {
                 const data = s.toJSON();
+                // If study instance count is 0, try to sum series counts
+                let studyImages = data.numberOfStudyRelatedInstances || 0;
+                if (studyImages === 0) {
+                    const sers = await db.series.find({ selector: { studyInstanceUID: data.studyInstanceUID } }).exec();
+                    studyImages = sers.reduce((acc, ser: any) => acc + (ser.numberOfSeriesRelatedInstances || 0), 0);
+                }
+
                 return {
                     ...data,
+                    numberOfStudyRelatedInstances: studyImages,
                     institutionName: data.institutionName || patientDoc?.institutionName || ''
                 };
-            });
-            setStudiesMap(prev => ({ ...prev, [patientId]: mappedStudies }));
+            }));
+            // Filter out empty studies
+            setStudiesMap(prev => ({ ...prev, [patientId]: mappedStudies.filter(s => s.numberOfStudyRelatedInstances > 0) }));
         }
     };
 
     const fetchSeriesForStudy = async (studyUid: string) => {
         if (!db) return;
-        const seriesDocs = await db.T_Subseries.find({ selector: { studyInstanceUID: studyUid } }).exec();
+        const seriesDocs = await db.series.find({ selector: { studyInstanceUID: studyUid } }).exec();
         const seriesWithCounts = await Promise.all(seriesDocs.map(async (s) => {
-            const count = await db.T_FilePath.count({ selector: { seriesInstanceUID: s.seriesInstanceUID } }).exec();
+            const count = await db.images.count({ selector: { seriesInstanceUID: s.seriesInstanceUID } }).exec();
             return { ...s.toJSON(), imageCount: count };
         }));
-        setSeriesMap(prev => ({ ...prev, [studyUid]: seriesWithCounts }));
+        // Filter out empty series (0 images)
+        setSeriesMap(prev => ({ ...prev, [studyUid]: seriesWithCounts.filter(s => s.imageCount > 0) }));
     };
 
     // Re-fetch data for expanded items when a deletion occurs
@@ -337,19 +350,32 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                             className="px-2 py-0.5 rounded border border-gray-300 text-[10px] w-24 focus:outline-none focus:ring-1 focus:ring-peregrine-accent bg-white"
                         />
                         {hasActiveFilters && (
-                            <button
-                                onClick={() => setSearchFilters({
-                                    patientName: '',
-                                    patientID: '',
-                                    dateRange: { start: '', end: '' },
-                                    modalities: [],
-                                    studyDescription: '',
-                                    userComments: ''
-                                })}
-                                className="text-gray-400 hover:text-red-500 transition-colors"
-                            >
-                                <X size={14} />
-                            </button>
+                            <>
+                                <button
+                                    onClick={() => {
+                                        const name = prompt('Enter a name for this smart folder:', 'New Smart Folder');
+                                        if (name) saveSmartFolder(name, 'Bookmark');
+                                    }}
+                                    className="text-gray-400 hover:text-peregrine-accent transition-colors ml-1"
+                                    title="Save as Smart Folder"
+                                >
+                                    <Bookmark size={14} />
+                                </button>
+                                <button
+                                    onClick={() => setSearchFilters({
+                                        patientName: '',
+                                        patientID: '',
+                                        dateRange: { start: '', end: '' },
+                                        modalities: [],
+                                        studyDescription: '',
+                                        institutionName: '',
+                                        userComments: ''
+                                    } as any)}
+                                    className="text-gray-400 hover:text-red-500 transition-colors"
+                                >
+                                    <X size={14} />
+                                </button>
+                            </>
                         )}
                     </div>
                 )}
@@ -357,24 +383,32 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                     <span className="text-[9px] font-bold text-peregrine-accent">Filters active</span>
                 )}
             </div>
-            {/* Table Header - Peregrine Slate Style */}
-            <div className="grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] bg-gradient-to-b from-[#e8e8e8] to-[#d0d0d0] border-b border-[#a0a0a0] px-4 py-1.5 text-[9px] font-black uppercase tracking-tight text-gray-700 shadow-sm z-20">
-                <div className="border-r border-gray-300 pr-2 last:border-none flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('patientName')}>
+            {/* Table Header: Pro-style with borders and subtle gradient */}
+            <div className="grid grid-cols-[28px_1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-2 bg-gradient-to-b from-[#f8f8fa] to-[#efeff4] border-y border-[#d1d1d6] text-[10px] uppercase font-black tracking-widest text-[#666] select-none sticky top-0 z-20">
+                <div className="flex items-center justify-center border-r border-[#d1d1d6]">
+                    <input
+                        type="checkbox"
+                        checked={checkedItems.size > 0 && checkedItems.size === patients.length}
+                        onChange={() => { }}
+                        className="w-3 h-3 rounded border-gray-300 text-peregrine-accent focus:ring-0 focus:ring-offset-0 cursor-pointer opacity-50"
+                    />
+                </div>
+                <div className="border-r border-[#d1d1d6] px-2 flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('patientName')}>
                     <div className="flex items-center gap-2">
                         <div className={`w-2 h-2 rounded-full shadow-sm ${localListener.isRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} title={localListener.isRunning ? 'DICOM Listener Online' : 'DICOM Listener Offline'} />
                         Patient Name
                     </div>
                     {getSortIcon('patientName')}
                 </div>
-                <div className="border-r border-gray-300 px-2 last:border-none flex items-center">Patient ID</div>
-                <div className="border-r border-gray-300 px-2 last:border-none flex items-center">Birth Date</div>
-                <div className="border-r border-gray-300 px-2 last:border-none flex items-center">Sex</div>
-                <div className="border-r border-gray-300 px-2 last:border-none flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('studyDate')}>Study Date{getSortIcon('studyDate')}</div>
-                <div className="border-r border-gray-300 px-2 last:border-none flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('studyDescription')}>Description{getSortIcon('studyDescription')}</div>
-                <div className="border-r border-gray-300 px-2 last:border-none flex items-center">Modality</div>
-                <div className="border-r border-gray-300 px-2 last:border-none flex items-center text-right"># im</div>
-                <div className="border-r border-gray-300 px-2 last:border-none flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('userComments')}>Comments{getSortIcon('userComments')}</div>
-                <div className="text-center text-red-500/50 flex justify-center items-center"><Trash2 size={10} /></div>
+                <div className="border-r border-[#d1d1d6] px-2 flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('patientID')}>Patient ID{getSortIcon('patientID')}</div>
+                <div className="border-r border-[#d1d1d6] px-2 flex items-center">Birth Date</div>
+                <div className="border-r border-[#d1d1d6] px-2 flex items-center">Sex</div>
+                <div className="border-r border-[#d1d1d6] px-2 flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('studyDate')}>Study Date{getSortIcon('studyDate')}</div>
+                <div className="border-r border-[#d1d1d6] px-2 flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('studyDescription')}>Description{getSortIcon('studyDescription')}</div>
+                <div className="border-r border-[#d1d1d6] px-2 flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('modalities')}>Modality{getSortIcon('modalities')}</div>
+                <div className="border-r border-[#d1d1d6] px-2 flex items-center text-right cursor-pointer hover:bg-black/5" onClick={() => handleSort('numberOfPatientRelatedInstances')}># IM{getSortIcon('numberOfPatientRelatedInstances')}</div>
+                <div className="border-r border-[#d1d1d6] px-2 flex items-center cursor-pointer hover:bg-black/5" onClick={() => handleSort('userComments')}>Comments{getSortIcon('userComments')}</div>
+                <div className="text-center text-red-500/50 flex justify-center items-center"><Trash2 size={12} /></div>
             </div>
 
             {/* Table Content */}
@@ -385,13 +419,31 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                         <span className="text-xs font-medium uppercase tracking-widest">No Database Records</span>
                     </div>
                 ) : (
-                    patients.map((patient) => (
+                    patients.map((patient, pIdx) => (
                         <React.Fragment key={patient.id}>
                             {/* Patient Row (or Study Row in Study Mode) */}
                             <div
                                 onClick={() => togglePatient(patient.id)}
-                                className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-1.5 cursor-default transition-all items-center text-[11px] group border-b border-[#f0f0f0] ${(patient._isStudy ? (selectedStudyUid === patient.id) : (selectedPatientId === patient.id)) ? 'bg-[#387aff] text-white' : 'hover:bg-blue-50/50'}`}
+                                className={`
+                                    grid grid-cols-[28px_1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-1.5 cursor-default transition-all items-center text-[11px] group border-b border-[#f0f0f0]
+                                    ${(patient._isStudy ? (selectedStudyUid === patient.id) : (selectedPatientId === patient.id))
+                                        ? 'bg-[#007aff] text-white' // iOS / Horos Blue
+                                        : pIdx % 2 === 0 ? 'bg-white' : 'bg-[#f5f5f7]' // Zebra Striping
+                                    }
+                                    hover:brightness-[0.98]
+                                `}
                             >
+                                <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                                    <input
+                                        type="checkbox"
+                                        checked={checkedItems.has(patient.id)}
+                                        onChange={(e) => {
+                                            e.stopPropagation();
+                                            toggleSelection(patient.id, patient._isStudy ? 'study' : 'patient');
+                                        }}
+                                        className="w-3 h-3 rounded border-gray-300 text-peregrine-accent focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                                    />
+                                </div>
                                 <div
                                     className="flex items-center gap-1.5 font-bold truncate cursor-text"
                                     onMouseEnter={() => setHoveredCell({ type: 'patientName', value: patient.patientName || '' })}
@@ -431,7 +483,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                     )}
                                 </div>
                                 <div className={`text-right font-mono text-[10px] px-2 ${selectedPatientId === patient.id ? 'text-white/90' : 'text-gray-400'}`}>
-                                    {patient.totalImageCount || 0}
+                                    {(patient.numberOfPatientRelatedInstances || patient.totalImageCount) || 0}
                                 </div>
                                 <div className="px-2 flex items-center">
                                     <input
@@ -441,10 +493,10 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                             if (!db) return;
                                             const val = e.target.value;
                                             if (patient._isStudy) {
-                                                const doc = await db.T_Study.findOne(patient.id).exec();
+                                                const doc = await db.studies.findOne(patient.id).exec();
                                                 if (doc) await doc.patch({ userComments: val });
                                             } else {
-                                                // If it's a patient, we don't have userComments in T_Patient yet, 
+                                                // If it's a patient, we don't have userComments in patients yet, 
                                                 // but the provider maps the first study's comments. 
                                                 // For now, let's just make it editable if it's a study.
                                             }
@@ -468,189 +520,178 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                     >
                                         <Trash2 size={14} />
                                     </button>
-                                    {/* Send Context Button (Visible on hover) */}
-                                    {patient._isStudy && (
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                setSendMenu({ x: e.clientX, y: e.clientY, type: 'study', uid: patient.id });
-                                                setShowSendModal(true);
-                                            }}
-                                            className={`p-1 rounded-md transition-colors ml-1 ${(patient._isStudy ? (selectedStudyUid === patient.id) : (selectedPatientId === patient.id)) ? 'hover:bg-white/20 text-white' : 'hover:bg-blue-50 text-blue-500'}`}
-                                            title="Send to PACS"
-                                        >
-                                            <div className="rotate-[-45deg]"><Activity size={14} /></div>
-                                        </button>
-                                    )}
                                 </div>
                             </div>
 
                             {/* Nested Content: Studies or Series (if Study Mode) */}
-                            {
-                                expandedPatients.has(patient.id) && (
-                                    patient._isStudy ? (
-                                        // Study Mode: Render Series directly
-                                        (studiesMap[patient.id] || []).map((series: any) => (
+                            {expandedPatients.has(patient.id) && (
+                                patient._isStudy ? (
+                                    // Study Mode: Render Series directly
+                                    (studiesMap[patient.id] || []).map((series: any) => (
+                                        <div
+                                            key={series.seriesInstanceUID}
+                                            onClick={(e) => { e.stopPropagation(); onSeriesSelect(series.seriesInstanceUID); }}
+                                            onDoubleClick={(e) => {
+                                                e.stopPropagation();
+                                                if ((window as any).electron?.openViewer) {
+                                                    (window as any).electron.openViewer(series.seriesInstanceUID);
+                                                }
+                                            }}
+                                            className={`grid grid-cols-[28px_1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-0.5 cursor-default text-[10px] items-center group/series transition-all ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-peregrine-accent text-white' : 'hover:bg-gray-100 text-gray-600'}`}
+                                        >
+                                            <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={checkedItems.has(series.seriesInstanceUID)}
+                                                    onChange={(e) => {
+                                                        e.stopPropagation();
+                                                        toggleSelection(series.seriesInstanceUID, 'series');
+                                                    }}
+                                                    className="w-3 h-3 rounded border-gray-300 text-peregrine-accent focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                                                />
+                                            </div>
                                             <div
-                                                key={series.seriesInstanceUID}
-                                                onClick={(e) => { e.stopPropagation(); onSeriesSelect(series.seriesInstanceUID); }}
-                                                onDoubleClick={(e) => {
-                                                    e.stopPropagation();
-                                                    if ((window as any).electron?.openViewer) {
-                                                        (window as any).electron.openViewer(series.seriesInstanceUID);
-                                                    }
-                                                }}
-                                                className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-0.5 cursor-default text-[10px] items-center border-l-[3px] group/series transition-all ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-peregrine-accent text-white border-blue-600' : 'hover:bg-gray-100 text-gray-600 border-transparent'}`}
+                                                className="flex items-center gap-1.5 pl-8 truncate cursor-text"
+                                                onMouseEnter={() => setHoveredCell({ type: 'seriesDescription', value: series.seriesDescription || '' })}
+                                                onMouseLeave={() => setHoveredCell(null)}
                                             >
-                                                <div
-                                                    className="flex items-center gap-1.5 pl-8 truncate cursor-text"
-                                                    onMouseEnter={() => setHoveredCell({ type: 'seriesDescription', value: series.seriesDescription || '' })}
-                                                    onMouseLeave={() => setHoveredCell(null)}
+                                                <span className="font-medium">
+                                                    {series.seriesDescription || `Series ${series.seriesNumber}`}
+                                                </span>
+                                                {series.fusionPairId && (
+                                                    <span className="px-1 bg-indigo-50 text-indigo-500 text-[8px] font-black rounded border border-indigo-100 ml-1">FUSION</span>
+                                                )}
+                                            </div>
+                                            <div className={`font-mono text-[9px] ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}`}>S:{series.seriesNumber}</div>
+                                            <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
+                                            <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
+                                            <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/70' : 'text-gray-400'}>{series.seriesDate || '-'}</div>
+                                            <div
+                                                className={`truncate px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/80' : 'text-gray-500'}`}
+                                                onMouseEnter={() => series.seriesDescription && setHoveredCell({ type: 'seriesDescription', value: series.seriesDescription })}
+                                                onMouseLeave={() => setHoveredCell(null)}
+                                            >
+                                                {series.seriesDescription}
+                                            </div>
+                                            <div className="flex">
+                                                <span className={`px-1 rounded text-[8px] font-black ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-white/20 text-white' : 'bg-gray-50 text-gray-400 border border-gray-100 uppercase'}`}>{series.modality}</span>
+                                            </div>
+                                            <div className={`text-right font-mono font-bold px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white' : 'text-[#ff3b30]'}`}>
+                                                {series.imageCount || 0}
+                                            </div>
+                                            <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
+                                            <div className="flex justify-center group/action">
+                                                <button
+                                                    onClick={(e) => handleDeleteSeries(e, series.seriesInstanceUID, series.seriesDescription || 'Series')}
+                                                    className="p-1.5 text-black/10 hover:text-red-500 hover:bg-red-50 rounded-md transition-all"
+                                                    title="Delete Series"
                                                 >
-                                                    <Activity size={10} className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'} />
-                                                    <span className="font-medium">
-                                                        {series.seriesDescription || `Series ${series.seriesNumber}`}
-                                                    </span>
+                                                    <Trash2 size={10} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))
+                                ) : (
+                                    // Normal Patient Mode: Render Studies
+                                    (studiesMap[patient.id] || []).map((study: any) => (
+                                        <React.Fragment key={study.studyInstanceUID}>
+                                            <div
+                                                onClick={(e) => { e.stopPropagation(); toggleStudy(study.studyInstanceUID); }}
+                                                className={`grid grid-cols-[28px_1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-1 border-b border-[#f5f5f7] items-center text-[11px] cursor-default transition-colors ${selectedStudyUid === study.studyInstanceUID ? 'bg-blue-50/80' : 'bg-gray-50/50 hover:bg-gray-100/50'}`}
+                                            >
+                                                <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={checkedItems.has(study.studyInstanceUID)}
+                                                        onChange={(e) => {
+                                                            e.stopPropagation();
+                                                            toggleSelection(study.studyInstanceUID, 'study');
+                                                        }}
+                                                        className="w-3 h-3 rounded border-gray-300 text-peregrine-accent focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                                                    />
                                                 </div>
-                                                <div className={`font-mono text-[9px] ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}`}>S:{series.seriesNumber}</div>
-                                                <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
-                                                <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
-                                                <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/70' : 'text-gray-400'}>{series.seriesDate || '-'}</div>
-                                                <div
-                                                    className={`truncate px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/80' : 'text-gray-500'}`}
-                                                    onMouseEnter={() => series.seriesDescription && setHoveredCell({ type: 'seriesDescription', value: series.seriesDescription })}
-                                                    onMouseLeave={() => setHoveredCell(null)}
-                                                >
-                                                    {series.seriesDescription}
+                                                <div className="flex items-center gap-1.5 pl-6 truncate text-gray-700">
+                                                    <div className="w-4 flex items-center justify-center text-gray-400">
+                                                        {expandedStudies.has(study.studyInstanceUID) ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                                                    </div>
+                                                    <Calendar size={12} className="text-gray-400 shrink-0" />
+                                                    <span className="font-semibold truncate uppercase">{study.studyDescription || 'No Description'}</span>
                                                 </div>
-                                                <div className="flex">
-                                                    <span className={`px-1 rounded text-[8px] font-black ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-white/20 text-white' : 'bg-gray-50 text-gray-400 border border-gray-100 uppercase'}`}>{series.modality}</span>
-                                                </div>
-                                                <div className={`text-right font-mono font-bold px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white' : 'text-[#ff3b30]'}`}>
-                                                    {series.imageCount || 0}
-                                                </div>
-                                                <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
-                                                <div className="flex justify-end opacity-40 group-hover/series:opacity-100 transition-opacity">
+                                                <div className="px-2 truncate text-gray-400 font-mono text-[9px] uppercase">{study.studyID || '-'}</div>
+                                                <div className="px-2 text-gray-500 font-medium tabular-nums">{study.studyDate}</div>
+                                                <div className="px-2 text-gray-400">-</div>
+                                                <div className="px-2 text-gray-400">-</div>
+                                                <div className="px-2 text-gray-400">-</div>
+                                                <div className="px-2 text-gray-400">-</div>
+                                                <div className="px-2 text-gray-700 text-right font-bold pr-4">{study.numberOfStudyRelatedInstances}</div>
+                                                <div className="px-2 truncate text-gray-400 italic">{study.userComments || ''}</div>
+                                                <div className="flex justify-center group/action">
                                                     <button
-                                                        onClick={(e) => handleDeleteSeries(e, series.seriesInstanceUID, series.seriesDescription || 'Untitled Series')}
-                                                        className={`p-1 rounded-md transition-colors ${selectedSeriesUid === series.seriesInstanceUID ? 'hover:bg-white/20 text-white' : 'hover:bg-red-50 text-red-400 hover:text-red-500'}`}
+                                                        onClick={(e) => handleDeleteStudy(e, study.studyInstanceUID, study.studyDescription || 'Study')}
+                                                        className="p-1.5 text-black/10 hover:text-red-500 hover:bg-red-50 rounded-md transition-all"
+                                                        title="Delete Study"
                                                     >
-                                                        <Trash2 size={12} />
+                                                        <Trash2 size={10} />
                                                     </button>
                                                 </div>
                                             </div>
-                                        ))
-                                    ) : (
-                                        // Normal Patient Mode: Render Studies
-                                        (studiesMap[patient.id] || []).map((study: any) => (
-                                            <React.Fragment key={study.studyInstanceUID}>
-                                                <div
-                                                    onClick={(e) => { e.stopPropagation(); toggleStudy(study.studyInstanceUID); }}
-                                                    className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-1 cursor-default text-[10.5px] items-center border-l-[3px] group/study ${selectedStudyUid === study.studyInstanceUID ? 'bg-[#d0e0ff] border-peregrine-accent' : 'hover:bg-gray-100/50 border-transparent'}`}
-                                                >
-                                                    <div className="flex items-center gap-1.5 pl-4 text-gray-800 font-semibold truncate">
-                                                        <div className="w-4 flex items-center justify-center text-gray-400">
-                                                            {expandedStudies.has(study.studyInstanceUID) ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                                                        </div>
-                                                        <Calendar size={12} className="text-[#ff9500]/80" />
-                                                        <span className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Study</span>
-                                                    </div>
-                                                    <div className="text-gray-500 font-mono text-[9px] truncate px-2">-</div>
-                                                    <div className="text-gray-500 text-[9px] tabular-nums px-2">-</div>
-                                                    <div className="text-gray-400 px-2">-</div>
-                                                    <div className="text-gray-600 font-medium tabular-nums px-2">{formatDICOMDate(study.studyDate)}</div>
-                                                    <div className="text-gray-700 truncate font-bold px-2">{study.studyDescription || 'Untitled Study'}</div>
-                                                    <div className="flex gap-1 px-2">
-                                                        {study.modalitiesInStudy?.map((m: string) => (
-                                                            <span key={m} className="px-1 py-0.5 rounded bg-blue-50 text-peregrine-accent text-[8px] font-black border border-peregrine-accent/10">{m}</span>
-                                                        ))}
-                                                    </div>
-                                                    <div className="text-right text-gray-600 font-mono text-[9px] font-bold px-2">{study.numberOfStudyRelatedInstances || '-'}</div>
-                                                    <div className="px-2 flex items-center">
-                                                        <input
-                                                            type="text"
-                                                            defaultValue={study.userComments || ''}
-                                                            onBlur={async (e) => {
-                                                                if (!db) return;
-                                                                const doc = await db.T_Study.findOne(study.studyInstanceUID).exec();
-                                                                if (doc) await doc.patch({ userComments: e.target.value });
-                                                            }}
-                                                            onClick={(e) => e.stopPropagation()}
-                                                            className="bg-transparent border-none text-[10px] w-full focus:outline-none focus:ring-1 focus:ring-peregrine-accent/30 rounded px-1 text-gray-500"
-                                                            placeholder="Add comment..."
-                                                        />
-                                                    </div>
-                                                    <div className="flex justify-end opacity-40 group-hover/study:opacity-100 transition-opacity">
-                                                        <button
-                                                            onClick={(e) => handleDeleteStudy(e, study.studyInstanceUID, study.studyDescription || 'Untitled Study')}
-                                                            className="p-1 rounded-md transition-colors hover:bg-red-50 text-red-500/70 hover:text-red-500"
+                                            {expandedStudies.has(study.studyInstanceUID) && (
+                                                <div className="bg-white/30">
+                                                    {(seriesMap[study.studyInstanceUID] || []).map((series: any) => (
+                                                        <div
+                                                            key={series.seriesInstanceUID}
+                                                            onClick={(e) => { e.stopPropagation(); onSeriesSelect(series.seriesInstanceUID); }}
+                                                            className={`grid grid-cols-[28px_1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-1 border-b border-[#f8f8fa]/50 items-center text-[10px] cursor-default transition-colors ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-blue-50/40' : 'hover:bg-gray-100/30'}`}
                                                         >
-                                                            <Trash2 size={13} />
-                                                        </button>
-                                                    </div>
+                                                            <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={checkedItems.has(series.seriesInstanceUID)}
+                                                                    onChange={(e) => {
+                                                                        e.stopPropagation();
+                                                                        toggleSelection(series.seriesInstanceUID, 'series');
+                                                                    }}
+                                                                    className="w-3 h-3 rounded border-gray-300 text-peregrine-accent focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                                                                />
+                                                            </div>
+                                                            <div className="flex items-center gap-2 pl-12 truncate text-gray-600">
+                                                                <Layers size={11} className="text-gray-400 shrink-0" />
+                                                                <span className="font-medium truncate uppercase">{series.seriesDescription || `Series ${series.seriesNumber}`}</span>
+                                                                {series.fusionPairId && (
+                                                                    <span className="px-1 bg-indigo-50 text-indigo-500 text-[8px] font-black rounded border border-indigo-100 shrink-0">FUSION</span>
+                                                                )}
+                                                                <span className="text-[9px] text-gray-400 font-mono">[{series.modality}]</span>
+                                                            </div>
+                                                            <div className="px-2 text-gray-400 font-mono text-[9px] uppercase">{series.seriesNumber || '-'}</div>
+                                                            <div className="px-2 text-gray-400">-</div>
+                                                            <div className="px-2 text-gray-400">-</div>
+                                                            <div className="px-2 text-gray-400">-</div>
+                                                            <div className="px-2 text-gray-400">-</div>
+                                                            <div className="px-2 text-gray-400 uppercase">{series.modality}</div>
+                                                            <div className="px-2 text-gray-[#ff3b30] font-bold text-right pr-4">{series.imageCount || 0}</div>
+                                                            <div className="px-2 truncate text-gray-400 italic"></div>
+                                                            <div className="flex justify-center group/action">
+                                                                <button
+                                                                    onClick={(e) => handleDeleteSeries(e, series.seriesInstanceUID, series.seriesDescription || 'Series')}
+                                                                    className="p-1.5 text-black/10 hover:text-red-500 hover:bg-red-50 rounded-md transition-all"
+                                                                    title="Delete Series"
+                                                                >
+                                                                    <Trash2 size={10} />
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    ))}
                                                 </div>
-
-                                                {/* Nested Series */}
-                                                {expandedStudies.has(study.studyInstanceUID) && (seriesMap[study.studyInstanceUID] || []).map((series: any) => (
-                                                    <div
-                                                        key={series.seriesInstanceUID}
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            // SYNC CONTEXT: Ensure Patient and Study are also selected when Series is clicked
-                                                            // This fixes the issue where jumping between patients' series didn't update the Series Browser
-                                                            onPatientSelect(patient.id);
-                                                            onStudySelect(study.studyInstanceUID);
-                                                            onSeriesSelect(series.seriesInstanceUID);
-                                                        }}
-                                                        onDoubleClick={(e) => {
-                                                            e.stopPropagation();
-                                                            // Double click also needs to sync context if single click didn't happen fast enough
-                                                            onPatientSelect(patient.id);
-                                                            onStudySelect(study.studyInstanceUID);
-                                                            onSeriesSelect(series.seriesInstanceUID);
-                                                            if ((window as any).electron?.openViewer) {
-                                                                (window as any).electron.openViewer(series.seriesInstanceUID);
-                                                            }
-                                                        }}
-                                                        className={`grid grid-cols-[1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-0.5 cursor-default text-[10px] items-center border-l-[3px] group/series transition-all ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-peregrine-accent text-white border-blue-600' : 'hover:bg-gray-100 text-gray-600 border-transparent'}`}
-                                                    >
-                                                        <div className="flex items-center gap-1.5 pl-12 truncate">
-                                                            <Activity size={10} className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'} />
-                                                            <span className="font-medium">{series.seriesDescription || `Series ${series.seriesNumber}`}</span>
-                                                        </div>
-                                                        <div className={`font-mono text-[9px] ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'} px-2`}>S:{series.seriesNumber}</div>
-                                                        <div className={`px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}`}>-</div>
-                                                        <div className={`px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}`}>-</div>
-                                                        <div className={`px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/70' : 'text-gray-400'}`}>{series.seriesDate || '-'}</div>
-                                                        <div className={`truncate px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/80' : 'text-gray-500'}`}>{series.seriesDescription}</div>
-                                                        <div className="flex px-2">
-                                                            <span className={`px-1 rounded text-[8px] font-black ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-white/20 text-white' : 'bg-gray-50 text-gray-400 border border-gray-100 uppercase'}`}>{series.modality}</span>
-                                                        </div>
-                                                        <div className={`text-right font-mono font-bold px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white' : 'text-[#ff3b30]'}`}>
-                                                            {series.imageCount || 0}
-                                                        </div>
-                                                        <div className={`px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}`}>-</div>
-                                                        <div className="flex justify-end opacity-40 group-hover/series:opacity-100 transition-opacity">
-                                                            <button
-                                                                onClick={(e) => handleDeleteSeries(e, series.seriesInstanceUID, series.seriesDescription || 'Untitled Series')}
-                                                                className={`p-1 rounded-md transition-colors ${selectedSeriesUid === series.seriesInstanceUID ? 'hover:bg-white/20 text-white' : 'hover:bg-red-50 text-red-400 hover:text-red-500'}`}
-                                                            >
-                                                                <Trash2 size={12} />
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </React.Fragment>
-                                        ))
-                                    )
+                                            )}
+                                        </React.Fragment>
+                                    ))
                                 )
-                            }
+                            )}
                         </React.Fragment>
                     ))
                 )}
             </div>
 
-            {/* Copy Feedback Notification */}
             {
                 showCopyFeedback && (
                     <div className="fixed top-20 right-4 bg-peregrine-accent text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 animate-in slide-in-from-top-2 duration-200 z-50">
@@ -658,52 +699,6 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
                         <span className="text-xs font-bold">Copied to clipboard!</span>
-                    </div>
-                )
-            }
-            {/* Send to PACS Modal */}
-            {
-                showSendModal && sendMenu && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-[1px]" onClick={() => setShowSendModal(false)}>
-                        <div className="bg-white border border-gray-200 rounded-lg w-[280px] p-3 shadow-xl" onClick={e => e.stopPropagation()}>
-                            <h3 className="text-gray-800 font-bold text-xs mb-2 uppercase tracking-wide">Send {sendMenu.type} to PACS</h3>
-                            <div className="space-y-1 mb-3">
-                                {servers.map(server => (
-                                    <button
-                                        key={server.id}
-                                        onClick={async () => {
-                                            if (db) {
-                                                let files: any[] = [];
-                                                if (sendMenu.type === 'study') {
-                                                    // Find all series for study, then all files
-                                                    const series = await db.T_Subseries.find({ selector: { studyInstanceUID: sendMenu.uid } }).exec();
-                                                    for (const s of series) {
-                                                        const fs = await db.T_FilePath.find({ selector: { seriesInstanceUID: s.seriesInstanceUID } }).exec();
-                                                        files.push(...fs);
-                                                    }
-                                                } else {
-                                                    files = await db.T_FilePath.find({ selector: { seriesInstanceUID: sendMenu.uid } }).exec();
-                                                }
-
-                                                const filePaths = files.map(f => f.filePath);
-                                                sendToPacs(server, filePaths);
-                                                setShowSendModal(false);
-                                            }
-                                        }}
-                                        className="w-full text-left px-3 py-2 text-[11px] text-gray-600 hover:bg-blue-50 hover:text-blue-600 rounded transition-colors flex justify-between items-center group font-medium"
-                                    >
-                                        <span>{server.aeTitle}</span>
-                                        <span className="text-[9px] text-gray-400 group-hover:text-blue-400/70">{server.address}:{server.port}</span>
-                                    </button>
-                                ))}
-                            </div>
-                            <button
-                                onClick={() => setShowSendModal(false)}
-                                className="w-full py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-500 text-[10px] font-bold rounded transition-colors"
-                            >
-                                Cancel
-                            </button>
-                        </div>
                     </div>
                 )
             }

@@ -26,7 +26,13 @@ export interface IElectronAPI {
         onStorageProgress: (callback: (data: any) => void) => () => void;
         setDebugLogging: (enabled: boolean) => Promise<void>;
         openLogFile: () => Promise<void>;
-    }
+    };
+    watcher: {
+        start: (dirPath: string) => Promise<boolean>;
+        stop: (dirPath: string) => Promise<void>;
+        getActive: () => Promise<string[]>;
+        onFilesAdded: (callback: (files: string[]) => void) => () => void;
+    };
 }
 
 declare global {

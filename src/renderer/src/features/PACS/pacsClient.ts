@@ -45,7 +45,7 @@ export class PACSClient {
         }
     }
 
-    async echo(): Promise<boolean> {
+    async echo(callingAet?: string): Promise<boolean> {
         if (this.server.isDicomWeb) {
             // DICOMweb doesn't strictly have C-ECHO, but we can check if URL is reachable
             // Or just return true as we assume web server is up if we can search
@@ -57,18 +57,19 @@ export class PACSClient {
             }
         } else {
             return window.electron.pacs.echo({
-                aeTitle: this.server.aeTitle,
+                aeTitle: this.server.aeTitle.trim(),
                 address: this.server.address,
-                port: this.server.port
+                port: this.server.port,
+                callingAet: callingAet?.trim()
             });
         }
     }
 
-    async searchStudies(filters: any = {}): Promise<PACSStudy[]> {
+    async searchStudies(filters: any = {}, callingAet?: string): Promise<PACSStudy[]> {
         if (this.server.isDicomWeb) {
             return this.searchDicomWeb(filters);
         } else {
-            return this.searchDimse(filters);
+            return this.searchDimse(filters, callingAet);
         }
     }
 
@@ -90,7 +91,7 @@ export class PACSClient {
         }
     }
 
-    private async searchDimse(filters: any): Promise<PACSStudy[]> {
+    private async searchDimse(filters: any, callingAet?: string): Promise<PACSStudy[]> {
         const query: any = {};
         if (filters.patientName) query['00100010'] = filters.patientName; // PatientName
         if (filters.patientId) query['00100020'] = filters.patientId;     // PatientID
@@ -100,9 +101,10 @@ export class PACSClient {
 
         try {
             const node = {
-                aeTitle: this.server.aeTitle,
+                aeTitle: this.server.aeTitle.trim(),
                 address: this.server.address,
-                port: this.server.port
+                port: this.server.port,
+                callingAet: callingAet?.trim()
             };
             const results = await window.electron.pacs.search(node, 'STUDY', query);
             return results.map((s: any) => this.mapDimseStudy(s));
@@ -112,30 +114,32 @@ export class PACSClient {
         }
     }
 
-    async retrieveStudy(studyInstanceUID: string, destinationAet: string = 'PEREGRINE'): Promise<boolean> {
+    async retrieveStudy(studyInstanceUID: string, destinationAet: string = 'PEREGRINE', callingAet?: string): Promise<boolean> {
         if (this.server.isDicomWeb) {
             // Retrieve is handled by importStudyFromPACS for DICOMweb in this project
             return true;
         } else {
             const node = {
-                aeTitle: this.server.aeTitle,
+                aeTitle: this.server.aeTitle.trim(),
                 address: this.server.address,
-                port: this.server.port
+                port: this.server.port,
+                callingAet: callingAet?.trim()
             };
-            return window.electron.pacs.move(node, destinationAet, 'STUDY', { StudyInstanceUID: studyInstanceUID });
+            return window.electron.pacs.move(node, destinationAet.trim(), 'STUDY', { StudyInstanceUID: studyInstanceUID });
         }
     }
 
-    async sendImages(filePaths: string[]): Promise<boolean> {
+    async sendImages(filePaths: string[], callingAet?: string): Promise<boolean> {
         if (this.server.isDicomWeb) {
             // STOW-RS implementation would go here
             console.warn('STOW-RS not yet implemented');
             return false;
         } else {
             const node = {
-                aeTitle: this.server.aeTitle,
+                aeTitle: this.server.aeTitle.trim(),
                 address: this.server.address,
-                port: this.server.port
+                port: this.server.port,
+                callingAet: callingAet?.trim()
             };
             return window.electron.pacs.store(node, filePaths);
         }

@@ -131,7 +131,7 @@ export const useViewportLoader = ({
                 // For thumbnails, prefix and use initialImageId immediately
                 ids = [`electronfile:${initialImageId.replace('electronfile:', '')}`];
             } else {
-                images = await db.T_FilePath.find({
+                images = await db.images.find({
                     selector: { seriesInstanceUID: seriesUid },
                     sort: [{ instanceNumber: 'asc' }]
                 }).exec();
@@ -244,7 +244,7 @@ export const useViewportLoader = ({
                 // --- ★ Fusion Integration ★ ---
                 if (fusionSeriesUid) {
                     const fusionVolumeId = `volume-${fusionSeriesUid}`;
-                    const fusionImages = await db.T_FilePath.find({
+                    const fusionImages = await db.images.find({
                         selector: { seriesInstanceUID: fusionSeriesUid },
                         sort: [{ instanceNumber: 'asc' }]
                     }).exec();
@@ -264,12 +264,12 @@ export const useViewportLoader = ({
                         await fusionVolume.load();
 
                         // Detect PET to apply colormap
-                        const subseries = await db.T_Subseries.findOne(fusionSeriesUid).exec();
+                        const subseries = await db.series.findOne(fusionSeriesUid).exec();
                         const isPET = subseries?.modality === 'PT';
 
                         volumeInputs.push({
                             volumeId: fusionVolumeId,
-                            blendMode: Enums.BlendModes.ADDITIVE, // Standard for fusion
+                            blendMode: Enums.BlendModes.MAXIMUM_INTENSITY_BLEND, // Standard for fusion fallback
                             callback: isPET ? ({ volumeActor }) => {
                                 // Apply "Hot Metal" or similar colormap for PET
                                 volumeActor.getProperty().setRGBTransferFunction(0, undefined); // Placeholder for actual colormap logic
@@ -384,9 +384,9 @@ export const useViewportLoader = ({
                     }));
                 } else {
                     // Fetch full metadata for overlays (Main Viewer Only)
-                    const subseries = await db.T_Subseries.findOne(seriesUid).exec();
-                    const study = subseries ? await db.T_Study.findOne({ selector: { studyInstanceUID: subseries.studyInstanceUID } }).exec() : null;
-                    const patient = study ? await db.T_Patient.findOne({ selector: { id: study.patientId } }).exec() : null;
+                    const subseries = await db.series.findOne(seriesUid).exec();
+                    const study = subseries ? await db.studies.findOne({ selector: { studyInstanceUID: subseries.studyInstanceUID } }).exec() : null;
+                    const patient = study ? await db.patients.findOne({ selector: { id: study.patientId } }).exec() : null;
 
                     setMetadata(prev => ({
                         ...prev,

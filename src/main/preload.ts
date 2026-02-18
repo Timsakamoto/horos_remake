@@ -39,6 +39,16 @@ const api = {
         },
         setDebugLogging: (enabled: boolean) => ipcRenderer.invoke('pacs:setDebugLogging', enabled),
         openLogFile: () => ipcRenderer.invoke('pacs:openLogFile')
+    },
+    watcher: {
+        start: (dirPath: string) => ipcRenderer.invoke('watcher:start', dirPath),
+        stop: (dirPath: string) => ipcRenderer.invoke('watcher:stop', dirPath),
+        getActive: () => ipcRenderer.invoke('watcher:getActive'),
+        onFilesAdded: (callback: (files: string[]) => void) => {
+            const listener = (_: any, files: string[]) => callback(files);
+            ipcRenderer.on('watcher:filesAdded', listener);
+            return () => ipcRenderer.removeListener('watcher:filesAdded', listener);
+        }
     }
 }
 

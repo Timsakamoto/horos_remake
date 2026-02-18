@@ -23,7 +23,7 @@ export interface StudyDocType {
 }
 
 export const StudySchema: RxJsonSchema<StudyDocType> = {
-    version: 3,
+    version: 9,
     primaryKey: 'studyInstanceUID',
     type: 'object',
     properties: {
@@ -32,13 +32,15 @@ export const StudySchema: RxJsonSchema<StudyDocType> = {
             maxLength: 100
         },
         studyDate: {
-            type: 'string'
+            type: 'string',
+            maxLength: 20
         },
         studyTime: {
             type: 'string'
         },
         accessionNumber: {
-            type: 'string'
+            type: 'string',
+            maxLength: 100
         },
         studyDescription: {
             type: 'string'
@@ -56,39 +58,47 @@ export const StudySchema: RxJsonSchema<StudyDocType> = {
             type: 'number'
         },
         numberOfStudyRelatedInstances: {
-            type: 'number'
+            type: 'number',
+            multipleOf: 1,
+            minimum: 0,
+            maximum: 1000000
         },
         patientAge: {
             type: 'string'
         },
         institutionName: {
-            type: 'string'
+            type: 'string',
+            maxLength: 200
         },
         referringPhysicianName: {
             type: 'string'
         },
         ImportDateTime: {
             type: 'string',
-            format: 'date-time'
+            format: 'date-time',
+            maxLength: 40
         },
         patientId: {
             type: 'string',
-            ref: 'T_Patient'
+            ref: 'patients',
+            maxLength: 200
         },
         studyDescriptionNormalized: {
-            type: 'string'
+            type: 'string',
+            maxLength: 200
         },
         status: {
             type: 'string',
             enum: ['pending', 'completed', 'local']
         },
         userComments: {
-            type: 'string'
+            type: 'string',
+            maxLength: 1000
         },
         isRemote: {
             type: 'boolean'
         }
     },
     required: ['studyInstanceUID', 'patientId'],
-    indexes: ['patientId', 'studyDate', 'ImportDateTime', 'studyDescriptionNormalized', 'userComments']
+    indexes: ['patientId', 'studyDate', 'ImportDateTime', 'studyDescriptionNormalized', 'userComments', 'accessionNumber', 'institutionName', 'numberOfStudyRelatedInstances']
 };

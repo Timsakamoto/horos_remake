@@ -27,7 +27,7 @@ import { initCornerstone } from './init';
 import { useDatabase } from '../Database/DatabaseProvider';
 import { useSettings } from '../Settings/SettingsContext';
 import { registerElectronImageLoader, prefetchMetadata } from './electronLoader';
-import { ToolMode } from './Toolbar';
+import { ToolMode } from './types';
 
 const { ViewportType } = Enums;
 const { MouseBindings } = csToolsEnums;
@@ -115,7 +115,7 @@ export const VRView = ({
         const loadVolume = async () => {
             setStatus('Loading Volume for VR...');
 
-            const images = await (db as any).T_FilePath.find({
+            const images = await (db as any).images.find({
                 selector: { seriesInstanceUID: seriesUid },
                 sort: [{ instanceNumber: 'asc' }]
             }).exec();

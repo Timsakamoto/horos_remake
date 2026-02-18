@@ -32,6 +32,7 @@
         "@cornerstonejs/nifti-volume-loader": "^1.68.0",
         "@cornerstonejs/streaming-image-volume-loader": "^1.68.0",
         "@cornerstonejs/tools": "^1.68.0",
+        "chokidar": "^5.0.0",
         "clsx": "^2.1.0",
         "dcmjs": "^0.29.13",
         "dcmjs-dimse": "^0.3.1",

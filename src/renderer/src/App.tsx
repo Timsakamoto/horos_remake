@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Activity } from 'lucide-react';
+import { Activity, Layers, Zap, Database, Folder, Bookmark } from 'lucide-react';
 import { ThumbnailStrip } from './features/Viewer/ThumbnailStrip';
 import { Viewport } from './features/Viewer/Viewport';
 import { OrthoView } from './features/Viewer/OrthoView';
@@ -14,10 +14,11 @@ import { SettingsDialog } from './features/Settings/SettingsDialog';
 import { PACSProvider, usePACS } from './features/PACS/PACSProvider';
 import { ViewerProvider, useViewer } from './features/Viewer/ViewerContext';
 import { CornerstoneManager } from './features/Viewer/CornerstoneManager';
+import { SendToPACSModal } from './features/PACS/SendToPACSModal';
 import { VOI, ViewportOrientation, ToolbarMode } from './features/Viewer/types';
 
 const AppContent = () => {
-    const { patients, importPaths, db } = useDatabase();
+    const { patients, importPaths, handleImport, db, smartFolders, activeSmartFolderId, applySmartFolder, saveSmartFolder, prefetchStudyThumbnails } = useDatabase();
     const { setShowSettings, viewMode: settingsViewMode } = useSettings();
     const { servers, activeServer, setActiveServer } = usePACS();
 
@@ -43,6 +44,22 @@ const AppContent = () => {
     const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
     const [selectedStudyUid, setSelectedStudyUid] = useState<string | null>(null);
 
+    // Trigger thumbnail prefetching when a study is selected
+    useEffect(() => {
+        if (selectedStudyUid) {
+            prefetchStudyThumbnails(selectedStudyUid);
+        }
+    }, [selectedStudyUid, prefetchStudyThumbnails]);
+
+    const getIcon = (iconName?: string) => {
+        switch (iconName) {
+            case 'Layers': return <Layers size={14} />;
+            case 'Zap': return <Zap size={14} />;
+            case 'Database': return <Database size={14} />;
+            case 'Bookmark': return <Bookmark size={14} />;
+            default: return <Folder size={14} />;
+        }
+    };
     const appMode: ToolbarMode = (activeView === 'Database' || activeView === 'PACS') ? 'DATABASE' : 'VIEWER';
 
     // Helper to find adjacent series
@@ -53,7 +70,7 @@ const AppContent = () => {
         if (!activeSeriesUid) return;
 
         // Fetch all series for this study, sorted by number
-        const seriesList = await db.T_Subseries.find({
+        const seriesList = await db.series.find({
             selector: { studyInstanceUID: selectedStudyUid },
             sort: [{ seriesNumber: 'asc' }]
         }).exec();
@@ -160,9 +177,9 @@ const AppContent = () => {
             const initViewer = async () => {
                 if (!db) return;
                 try {
-                    const seriesDoc = await db.T_Subseries.findOne({ selector: { seriesInstanceUID: seriesUid } }).exec();
+                    const seriesDoc = await db.series.findOne({ selector: { seriesInstanceUID: seriesUid } }).exec();
                     if (seriesDoc) {
-                        const studyDoc = await db.T_Study.findOne({ selector: { studyInstanceUID: seriesDoc.studyInstanceUID } }).exec();
+                        const studyDoc = await db.studies.findOne({ selector: { studyInstanceUID: seriesDoc.studyInstanceUID } }).exec();
                         if (studyDoc) {
                             setSelectedPatientId(studyDoc.patientId);
                             setSelectedStudyUid(studyDoc.studyInstanceUID);
@@ -431,18 +448,13 @@ const AppContent = () => {
     const [activeModality, setActiveModality] = useState<string | null>(null);
 
     const onOpenSettings = () => setShowSettings(true);
-    const onImport = async () => {
-        // Simple trigger for now, can be expanded
-        const handled = await (window as any).electron?.importFiles();
-        if (handled) importPaths(handled);
-    };
 
     useEffect(() => {
         if (!db || !activeSeriesUid) {
             setActiveModality(null);
             return;
         }
-        db.T_Subseries.findOne(activeSeriesUid).exec().then(s => {
+        db.series.findOne(activeSeriesUid).exec().then(s => {
             setActiveModality(s ? s.modality : null);
         });
     }, [db, activeSeriesUid]);
@@ -486,7 +498,7 @@ const AppContent = () => {
                 isSynced={isSynced}
                 onSyncToggle={toggleIsSynced}
                 onOpenSettings={onOpenSettings}
-                onImport={onImport}
+                onImport={handleImport}
                 onOpenViewer={onOpenViewer}
                 selectedSeriesUid={activeSeriesUid}
                 layout={layout}
@@ -521,6 +533,38 @@ const AppContent = () => {
                             <div className="w-72 bg-gradient-to-b from-[#f5f5f7] to-[#e8e8ea] border-r border-[#d1d1d6] flex flex-col z-30 select-none shadow-[inset_-1px_0_0_rgba(0,0,0,0.05)]">
                                 <div className="flex-1 overflow-y-auto py-4">
                                     <div className="px-4">
+                                        {/* Smart Folders Section */}
+                                        <div className="mb-6">
+                                            <h3 className="px-3 mb-2 text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center justify-between">
+                                                Smart Folders
+                                            </h3>
+                                            <div className="space-y-0.5">
+                                                {smartFolders.map(folder => (
+                                                    <div
+                                                        key={folder.id}
+                                                        onClick={() => {
+                                                            applySmartFolder(folder.id);
+                                                            handleViewChange('Database');
+                                                        }}
+                                                        className={`group flex items-center gap-2.5 px-3 py-1.5 rounded-lg font-medium text-xs cursor-pointer transition-all ${activeSmartFolderId === folder.id && activeView === 'Database'
+                                                            ? 'bg-black/5 text-gray-900 border border-black/5 shadow-sm'
+                                                            : 'text-gray-500 hover:bg-black/5'
+                                                            }`}
+                                                    >
+                                                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                                                            <div className={activeSmartFolderId === folder.id && activeView === 'Database' ? 'text-peregrine-accent' : 'text-gray-400'}>
+                                                                {getIcon(folder.icon)}
+                                                            </div>
+                                                            <span className="truncate">{folder.name}</span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        <div className="mb-2 text-[10px] font-black text-gray-400 uppercase tracking-widest px-3">
+                                            PACS Nodes
+                                        </div>
                                         <div className="space-y-0.5">
                                             {servers.map(server => (
                                                 <div
@@ -570,6 +614,7 @@ const AppContent = () => {
                                                 selectedPatientId={selectedPatientId}
                                                 selectedStudyUid={selectedStudyUid}
                                                 selectedSeriesUid={viewports[0].seriesUid}
+                                                saveSmartFolder={saveSmartFolder}
                                             />
                                         </div>
 
@@ -729,6 +774,7 @@ const AppContent = () => {
                 }
             </div >
             <SettingsDialog />
+            <SendToPACSModal />
         </div >
     );
 };

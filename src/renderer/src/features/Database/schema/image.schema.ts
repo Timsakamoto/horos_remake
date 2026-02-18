@@ -24,10 +24,11 @@ export interface ImageDocType {
     sequenceName?: string;
     diffusionBValue?: number;
     dicomSeriesInstanceUID?: string;
+    frameOfReferenceUID?: string;
 }
 
 export const ImageSchema: RxJsonSchema<ImageDocType> = {
-    version: 6,
+    version: 11,
     primaryKey: 'sopInstanceUID',
     type: 'object',
     properties: {
@@ -36,7 +37,10 @@ export const ImageSchema: RxJsonSchema<ImageDocType> = {
             maxLength: 100
         },
         instanceNumber: {
-            type: 'number'
+            type: 'number',
+            multipleOf: 1,
+            minimum: 0,
+            maximum: 1000000
         },
         numberOfFrames: {
             type: 'number'
@@ -55,7 +59,8 @@ export const ImageSchema: RxJsonSchema<ImageDocType> = {
         },
         seriesInstanceUID: {
             type: 'string',
-            ref: 'T_Subseries'
+            ref: 'series',
+            maxLength: 100
         },
         windowCenter: {
             type: 'number'
@@ -103,6 +108,10 @@ export const ImageSchema: RxJsonSchema<ImageDocType> = {
             type: 'number'
         },
         dicomSeriesInstanceUID: {
+            type: 'string',
+            maxLength: 100
+        },
+        frameOfReferenceUID: {
             type: 'string',
             maxLength: 100
         }
