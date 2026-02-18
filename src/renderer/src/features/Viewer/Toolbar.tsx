@@ -33,7 +33,7 @@ import { CLUT_PRESETS } from './CLUTPresets';
 import { GridSelector } from './GridSelector';
 import { usePACS } from '../PACS/PACSProvider';
 
-import { ViewMode, ToolMode, ProjectionMode, ToolbarMode, VOI } from './types';
+import { ViewMode, ToolMode, ProjectionMode, ToolbarMode, VOI, FusionTransferFunction } from './types';
 
 export interface WWLPreset {
     name: string;
@@ -91,6 +91,8 @@ interface Props {
     onFusionLUTChange?: (lut: string) => void;
     fusionVOI?: VOI | null;
     onFusionVOIChange?: (voi: VOI) => void;
+    fusionTransferFunction?: FusionTransferFunction;
+    onFusionTransferFunctionChange?: (mode: FusionTransferFunction) => void;
     showAnnotationList?: boolean;
     onToggleAnnotationList?: () => void;
 }
@@ -136,6 +138,8 @@ export const Toolbar = ({
     onFusionLUTChange,
     fusionVOI,
     onFusionVOIChange,
+    fusionTransferFunction = 'Linear',
+    onFusionTransferFunctionChange,
     showAnnotationList = false,
     onToggleAnnotationList
 }: Props) => {
@@ -702,6 +706,23 @@ export const Toolbar = ({
                                                 onChange={(e) => onFusionVOIChange?.({ ...fusionVOI, windowCenter: parseInt(e.target.value) })}
                                                 className="bg-white border border-gray-300 rounded px-1 py-0.5 text-[9px] font-bold text-gray-700 w-full focus:outline-none focus:ring-1 focus:ring-peregrine-accent"
                                             />
+                                        </div>
+                                    </div>
+
+                                    <div className="flex flex-col gap-0.5 w-20">
+                                        <span className="text-[7px] font-black text-gray-400 uppercase tracking-widest pl-1">TF Mode</span>
+                                        <div className="relative group">
+                                            <select
+                                                value={fusionTransferFunction}
+                                                onChange={(e) => onFusionTransferFunctionChange?.(e.target.value as FusionTransferFunction)}
+                                                className="appearance-none bg-white border border-gray-300 rounded-lg px-2 py-0.5 text-[9px] font-bold text-gray-700 w-full focus:outline-none focus:ring-1 focus:ring-peregrine-accent pr-5"
+                                            >
+                                                <option value="Linear">Linear</option>
+                                                <option value="Logarithmic">Log</option>
+                                                <option value="Exponential">Exp</option>
+                                                <option value="Flat">Flat</option>
+                                            </select>
+                                            <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                                         </div>
                                     </div>
 

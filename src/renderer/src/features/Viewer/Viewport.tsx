@@ -21,6 +21,7 @@ interface Props {
     fusionOpacity?: number;
     fusionLUT?: string;
     fusionVOI?: VOI | null;
+    fusionTransferFunction?: string;
     isSynced?: boolean;
     isCinePlaying?: boolean;
     showOverlays?: boolean;
@@ -44,6 +45,7 @@ export const Viewport = ({
     fusionOpacity,
     fusionLUT,
     fusionVOI,
+    fusionTransferFunction,
     projectionMode,
     isSynced = false,
     isCinePlaying = false,
@@ -78,6 +80,7 @@ export const Viewport = ({
         fusionOpacity,
         fusionLUT,
         fusionVOI,
+        fusionTransferFunction,
         projectionMode,
         autoFit: true,
         initialWindowWidth,

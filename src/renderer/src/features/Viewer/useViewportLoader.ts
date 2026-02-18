@@ -31,6 +31,7 @@ interface UseViewportLoaderProps {
     fusionOpacity?: number;
     fusionLUT?: string;
     fusionVOI?: VOI | null;
+    fusionTransferFunction?: string;
     projectionMode?: string;
     autoFit?: boolean;
     initialWindowWidth?: number;
@@ -52,12 +53,13 @@ export const useViewportLoader = ({
     fusionOpacity = 0.5,
     fusionLUT = 'Hot Metal',
     fusionVOI,
+    fusionTransferFunction = 'Linear',
     projectionMode,
     autoFit,
     initialWindowWidth,
     initialWindowCenter
 }: UseViewportLoaderProps) => {
-    const { db } = useDatabase();
+    const { db, prefetchStudyThumbnails } = useDatabase();
     const { databasePath } = useSettings();
 
     const [isReady, setIsReady] = useState(false);
@@ -297,30 +299,25 @@ export const useViewportLoader = ({
                             blendMode: Enums.BlendModes.MAXIMUM_INTENSITY_BLEND
                         });
 
-                        // --- ★ Smart Defaults for MRI/DWI ★ ---
-                        const fSeries = await db.series.findOne(fusionSeriesUid as string).exec();
-                        const isMR = fSeries?.modality === 'MR';
-                        const isDWI = fSeries?.seriesDescription?.toUpperCase().includes('DWI') ||
-                            fSeries?.seriesDescription?.toUpperCase().includes('DIFFUSION');
-
-                        const defaultLUT = (isMR && isDWI) ? 'Hot' : 'Hot Metal';
+                        // --- ★ Initial Fusion Properties ★ ---
+                        // Use provided LUT or default to 'Hot Metal' for visual distinction
                         const colormapMap: Record<string, string> = {
                             'Grayscale': '',
                             'Hot Metal': 'hotiron',
                             'PET': 'pet',
                             'Rainbow': 'rainbow',
                             'Jet': 'jet',
-                            'Hot': 'hot' // Added 'Hot' for DWI
+                            'Hot': 'hot'
                         };
-                        const colormapId = colormapMap[fusionLUT || defaultLUT] || 'hotiron';
+                        const colormapId = colormapMap[fusionLUT || 'Hot Metal'] || 'hotiron';
                         if (colormapId) {
-                            viewport.setProperties({ colormap: { name: colormapId } }, fusionActorId);
+                            viewport.setProperties({ colormap: { name: colormapId } }, fusionActorId as string);
                         }
 
                         // Apply VOI (Initial or State)
                         let targetVOI = fusionVOI;
                         if (!targetVOI) {
-                            // Fallback to first image's VOI if series is MRI/PET
+                            // Automatically fall back to the series' default Window/Level
                             const fImg = fusionImages[0];
                             if (fImg) {
                                 targetVOI = {
@@ -336,7 +333,7 @@ export const useViewportLoader = ({
                                     lower: targetVOI.windowCenter - targetVOI.windowWidth / 2,
                                     upper: targetVOI.windowCenter + targetVOI.windowWidth / 2,
                                 }
-                            }, fusionActorId);
+                            }, fusionActorId as string);
                         }
                     }
                 }
@@ -348,18 +345,20 @@ export const useViewportLoader = ({
                 if (fusionActorId) {
                     const fusionActor = viewport.getActor(fusionActorId)?.actor as any;
                     if (fusionActor) {
-                        fusionActor.getProperty().setScalarOpacity(0, fusionOpacity);
+                        // Update Opacity (Signal-Dependent Thresholding & Advanced Transfer Functions)
+                        applyFusionOpacity(fusionActor, fusionOpacity, fusionVOI, fusionTransferFunction);
 
-                        const colormapMap: Record<string, string> = {
+                        const fColormapMap: Record<string, string> = {
                             'Grayscale': '',
                             'Hot Metal': 'hotiron',
                             'PET': 'pet',
                             'Rainbow': 'rainbow',
-                            'Jet': 'jet'
+                            'Jet': 'jet',
+                            'Hot': 'hot'
                         };
-                        const colormapId = colormapMap[fusionLUT || 'Hot Metal'] || 'hotiron';
+                        const colormapId = fColormapMap[fusionLUT || 'Hot Metal'] || 'hotiron';
                         if (colormapId) {
-                            viewport.setProperties({ colormap: { name: colormapId } }, fusionActorId);
+                            viewport.setProperties({ colormap: { name: colormapId } }, fusionActorId as string);
                         }
 
                         if (fusionVOI && fusionVOI.windowWidth !== undefined && fusionVOI.windowCenter !== undefined) {
@@ -368,7 +367,7 @@ export const useViewportLoader = ({
                                     lower: fusionVOI.windowCenter - fusionVOI.windowWidth / 2,
                                     upper: fusionVOI.windowCenter + fusionVOI.windowWidth / 2,
                                 }
-                            }, fusionActorId);
+                            }, fusionActorId as string);
                         }
                     }
                 }
@@ -716,8 +715,8 @@ export const useViewportLoader = ({
         const fusionActorId = `volume-${fusionSeriesUid}`;
         const fusionActor = vp.getActor(fusionActorId)?.actor as any;
         if (fusionActor) {
-            // Update Opacity
-            fusionActor.getProperty().setScalarOpacity(0, fusionOpacity);
+            // Update Opacity (Signal-Dependent Thresholding & Advanced Transfer Functions)
+            applyFusionOpacity(fusionActor, fusionOpacity, fusionVOI, fusionTransferFunction);
 
             // Update Colormap
             const colormapMap: Record<string, string> = {
@@ -800,4 +799,52 @@ export const useViewportLoader = ({
         metadata,
         reload: loadSeries
     };
+};
+
+// --- ★ Helper: sophisticated opacity functions (Horos/Osirix style) ★ ---
+const applyFusionOpacity = (actor: any, baseOpacity: number, voi: VOI | null | undefined, mode: string = 'Linear') => {
+    const property = actor.getProperty();
+    const opacityFunction = property.getScalarOpacity(0);
+    opacityFunction.removeAllPoints();
+
+    if (!voi || voi.windowWidth === undefined || voi.windowCenter === undefined) {
+        property.setScalarOpacity(0, baseOpacity);
+        return;
+    }
+
+    const lower = voi.windowCenter - voi.windowWidth / 2;
+    const upper = voi.windowCenter + voi.windowWidth / 2;
+    const range = voi.windowWidth;
+
+    switch (mode) {
+        case 'Flat':
+            opacityFunction.addPoint(lower - 0.1, 0.0);
+            opacityFunction.addPoint(lower, baseOpacity);
+            opacityFunction.addPoint(upper, baseOpacity);
+            break;
+        case 'Logarithmic':
+            opacityFunction.addPoint(lower - 0.1, 0.0);
+            for (let i = 0; i <= 5; i++) {
+                const t = i / 5;
+                const val = lower + t * range;
+                const alpha = (Math.log10(1 + 9 * t)) * baseOpacity;
+                opacityFunction.addPoint(val, alpha);
+            }
+            break;
+        case 'Exponential':
+            opacityFunction.addPoint(lower - 0.1, 0.0);
+            for (let i = 0; i <= 5; i++) {
+                const t = i / 5;
+                const val = lower + t * range;
+                const alpha = ((Math.pow(10, t) - 1) / 9) * baseOpacity;
+                opacityFunction.addPoint(val, alpha);
+            }
+            break;
+        case 'Linear':
+        default:
+            opacityFunction.addPoint(lower - 0.1, 0.0);
+            opacityFunction.addPoint(lower, 0.0);
+            opacityFunction.addPoint(upper, baseOpacity);
+            break;
+    }
 };

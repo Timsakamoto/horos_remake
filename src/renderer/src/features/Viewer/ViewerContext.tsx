@@ -9,6 +9,7 @@ import {
     TOOL_GROUP_ID,
     RENDERING_ENGINE_ID,
     ActiveLUT,
+    FusionTransferFunction,
 } from './types';
 import {
     ToolGroupManager,
@@ -78,6 +79,7 @@ interface ViewerContextType {
     setViewportFusionOpacity: (index: number, opacity: number) => void;
     setViewportFusionLUT: (index: number, lut: ActiveLUT) => void;
     setViewportFusionVOI: (index: number, voi: VOI | null) => void;
+    setViewportFusionTransferFunction: (index: number, mode: FusionTransferFunction) => void;
 }
 
 const ViewerContext = createContext<ViewerContextType | undefined>(undefined);
@@ -115,7 +117,8 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
             activeLUT: 'Grayscale',
             fusionSeriesUid: null,
             fusionOpacity: 0.5,
-            fusionLUT: 'Hot Metal'
+            fusionLUT: 'Hot Metal',
+            fusionTransferFunction: 'Linear'
         }))
     );
 
@@ -308,6 +311,14 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
         });
     }, []);
 
+    const setViewportFusionTransferFunction = useCallback((index: number, mode: FusionTransferFunction) => {
+        setViewports(prev => {
+            const next = [...prev];
+            if (next[index]) next[index] = { ...next[index], fusionTransferFunction: mode };
+            return next;
+        });
+    }, []);
+
     // Global Tool Activation
     useEffect(() => {
         const toolGroup = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
@@ -404,7 +415,8 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
         setViewportFusionSeries,
         setViewportFusionOpacity,
         setViewportFusionLUT,
-        setViewportFusionVOI
+        setViewportFusionVOI,
+        setViewportFusionTransferFunction
     };
 
     return <ViewerContext.Provider value={value}>{children}</ViewerContext.Provider>;

@@ -20,7 +20,8 @@ export type ToolMode =
 export type ToolbarMode = 'DATABASE' | 'VIEWER';
 export type ProjectionMode = 'MIP' | 'NORMAL';
 export type ViewportOrientation = 'Axial' | 'Coronal' | 'Sagittal' | 'Acquisition' | 'Default';
-export type ActiveLUT = 'Grayscale' | 'Hot Metal' | 'PET' | 'Rainbow' | 'Flow' | 'Jet';
+export type ActiveLUT = 'Grayscale' | 'Hot Metal' | 'PET' | 'Rainbow' | 'Flow' | 'Jet' | 'Hot';
+export type FusionTransferFunction = 'Linear' | 'Logarithmic' | 'Exponential' | 'Flat';
 
 export interface VOI {
     windowWidth?: number;
@@ -38,6 +39,7 @@ export interface ViewportState {
     fusionOpacity?: number;
     fusionLUT?: ActiveLUT;
     fusionVOI?: VOI | null;
+    fusionTransferFunction?: FusionTransferFunction;
 }
 
 export interface Layout {

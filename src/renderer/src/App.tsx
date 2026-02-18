@@ -43,7 +43,8 @@ const AppContent = () => {
         onSeriesSelect,
         setViewportFusionOpacity,
         setViewportFusionLUT,
-        setViewportFusionVOI
+        setViewportFusionVOI,
+        setViewportFusionTransferFunction
     } = useViewer();
 
     const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
@@ -553,6 +554,8 @@ const AppContent = () => {
                 onFusionLUTChange={(lut) => setViewportFusionLUT(activeViewportIndex, lut as ActiveLUT)}
                 fusionVOI={viewports[activeViewportIndex]?.fusionVOI}
                 onFusionVOIChange={(voi) => setViewportFusionVOI(activeViewportIndex, voi)}
+                fusionTransferFunction={viewports[activeViewportIndex]?.fusionTransferFunction}
+                onFusionTransferFunctionChange={(mode) => setViewportFusionTransferFunction(activeViewportIndex, mode)}
                 showAnnotationList={showAnnotationList}
                 onToggleAnnotationList={() => setShowAnnotationList(!showAnnotationList)}
             />
@@ -762,6 +765,7 @@ const AppContent = () => {
                                                 fusionOpacity={vp.fusionOpacity}
                                                 fusionLUT={vp.fusionLUT}
                                                 fusionVOI={vp.fusionVOI}
+                                                fusionTransferFunction={vp.fusionTransferFunction}
                                                 projectionMode={vp.projectionMode}
                                                 isSynced={isSynced && vp.orientation === 'Default'} // Disable sync if re-oriented (MPR display unlinked)
                                                 isCinePlaying={isCinePlaying}
