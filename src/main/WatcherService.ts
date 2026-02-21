@@ -89,7 +89,15 @@ export class WatcherService {
         const files = Array.from(this.pendingFiles);
         this.pendingFiles.clear();
 
-        console.log(`[Watcher] Notifying renderer of ${files.length} new files`);
+        console.log(`[Watcher] Directly indexing ${files.length} new files in Main process`);
+
+        // Directly call ImportManager instead of relying on renderer
+        try {
+            const { ImportManager } = require('./database/ImportManager');
+            ImportManager.getInstance().importFiles(files);
+        } catch (e) {
+            console.error('[Watcher] Failed to trigger ImportManager:', e);
+        }
 
         const wins = BrowserWindow.getAllWindows();
         wins.forEach(w => {

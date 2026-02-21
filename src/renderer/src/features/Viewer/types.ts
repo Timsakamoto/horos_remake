@@ -18,7 +18,7 @@ export type ToolMode =
     | 'None'
     | 'StackScroll';
 export type ToolbarMode = 'DATABASE' | 'VIEWER';
-export type ProjectionMode = 'MIP' | 'NORMAL';
+export type ProjectionMode = 'MIP' | 'MINIP' | 'NORMAL';
 export type ViewportOrientation = 'Axial' | 'Coronal' | 'Sagittal' | 'Acquisition' | 'Default';
 export type ActiveLUT = 'Grayscale' | 'Hot Metal' | 'PET' | 'Rainbow' | 'Flow' | 'Jet' | 'Hot';
 export type FusionTransferFunction = 'Linear' | 'Logarithmic' | 'Exponential' | 'Flat';

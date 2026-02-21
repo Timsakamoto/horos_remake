@@ -24,7 +24,6 @@ import {
     Enums as csToolsEnums
 } from '@cornerstonejs/tools';
 import { initCornerstone } from './init';
-import { useDatabase } from '../Database/DatabaseProvider';
 import { useSettings } from '../Settings/SettingsContext';
 import { registerElectronImageLoader, prefetchMetadata } from './electronLoader';
 import { ToolMode } from './types';
@@ -52,7 +51,6 @@ export const VRView = ({
     activeTool
 }: Props) => {
     const elementRef = useRef<HTMLDivElement>(null);
-    const { db } = useDatabase();
     const { databasePath } = useSettings();
     const [status, setStatus] = useState<string>('');
     const [activePreset, setActivePreset] = useState<string>('CT-Bone');
@@ -110,15 +108,18 @@ export const VRView = ({
     }, []);
 
     useEffect(() => {
-        if (!db || !seriesUid) return;
+        if (!seriesUid) return;
 
         const loadVolume = async () => {
             setStatus('Loading Volume for VR...');
 
-            const images = await (db as any).images.find({
-                selector: { seriesInstanceUID: seriesUid },
-                sort: [{ instanceNumber: 'asc' }]
-            }).exec();
+            const images = await (window as any).electron.db.query(
+                `SELECT i.* FROM instances i 
+                 JOIN series s ON i.seriesId = s.id 
+                 WHERE s.seriesInstanceUID = ? 
+                 ORDER BY i.instanceNumber ASC`,
+                [seriesUid]
+            );
 
             if (images.length === 0) {
                 setStatus('No images.');
@@ -132,7 +133,7 @@ export const VRView = ({
                     // @ts-ignore
                     targetPath = await window.electron.join(databasePath, img.filePath);
                 }
-                return `electronfile:${targetPath}`;
+                return `electronfile://${targetPath}`;
             }));
 
             const volumeId = `cornerstoneStreamingImageVolume:volume-${seriesUid}`;
@@ -204,13 +205,17 @@ export const VRView = ({
         loadVolume();
 
         return () => {
-            const renderingEngine = getRenderingEngine(VR_RENDERING_ENGINE_ID);
-            if (renderingEngine) {
-                renderingEngine.disableElement(VR_VIEWPORT_ID);
+            try {
+                const renderingEngine = getRenderingEngine(VR_RENDERING_ENGINE_ID);
+                if (renderingEngine) {
+                    renderingEngine.disableElement(VR_VIEWPORT_ID);
+                }
+            } catch (e) {
+                console.warn('[VRView] Cleanup error:', e);
             }
         };
 
-    }, [db, seriesUid, databasePath]);
+    }, [seriesUid, databasePath]);
 
     // Update preset when changed in UI
     useEffect(() => {

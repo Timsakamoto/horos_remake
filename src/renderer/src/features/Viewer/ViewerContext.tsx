@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, ReactNode, useEffect } from 'react';
 import {
     ViewMode,
     ToolMode,
@@ -7,7 +7,6 @@ import {
     Layout,
     VOI,
     TOOL_GROUP_ID,
-    RENDERING_ENGINE_ID,
     ActiveLUT,
     FusionTransferFunction,
 } from './types';
@@ -26,11 +25,9 @@ import {
     BidirectionalTool,
     CrosshairsTool,
     ReferenceLinesTool,
+    StackScrollMouseWheelTool,
 } from '@cornerstonejs/tools';
 
-import {
-    getRenderingEngine,
-} from '@cornerstonejs/core';
 
 interface ViewerContextType {
     activeView: ViewMode;
@@ -94,6 +91,7 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
     const [activeView, setActiveView] = useState<ViewMode>(initialView);
     const [activeTool, setActiveTool] = useState<ToolMode>('StackScroll');
     const [activeViewportIndex, setActiveViewportIndex] = useState(0);
+    const activeViewportIndexRef = useRef(0); // Ref to avoid stale closures
     const [layout, setLayout] = useState<Layout>({ rows: 1, cols: 1 });
     const [projectionMode, setProjectionMode] = useState<ProjectionMode>('NORMAL');
     const [slabThickness, setSlabThickness] = useState(1);
@@ -134,76 +132,53 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
         }
     }, [initialSeriesUid, initialView]);
 
+    // Keep ref in sync with state
+    useEffect(() => {
+        activeViewportIndexRef.current = activeViewportIndex;
+    }, [activeViewportIndex]);
+
     const onSeriesSelect = useCallback((seriesUid: string | null, targetIndex?: number) => {
-        const isViewer = activeView !== 'Database' && activeView !== 'PACS';
-        const indexToUse = targetIndex ?? activeViewportIndex;
+        // Use ref to always get the LATEST activeViewportIndex, avoiding stale closures
+        const indexToUse = targetIndex ?? activeViewportIndexRef.current;
 
-        console.log(`[ViewerContext] onSeriesSelect: seriesUid=${seriesUid}, targetIndex=${targetIndex}, activeView=${activeView}, indexToUse=${indexToUse}`);
+        console.log(`[ViewerContext] onSeriesSelect: seriesUid=${seriesUid}, targetIndex=${targetIndex}, indexToUse=${indexToUse}`);
 
-        if (isViewer) {
-            setViewports(prev => {
-                const next = [...prev];
-                // Ensure the slot exists and is consistent
-                if (!next[indexToUse]) {
-                    console.warn(`[ViewerContext] target slot ${indexToUse} missing, creating...`);
-                    next[indexToUse] = {
-                        id: `vp-${indexToUse}`,
-                        seriesUid: null,
-                        orientation: 'Default',
-                        voi: null,
-                        projectionMode: 'NORMAL',
-                        activeLUT: 'Grayscale',
-                        fusionSeriesUid: null,
-                        fusionOpacity: 0.5,
-                        fusionLUT: 'Hot Metal'
-                    };
-                }
-
-                // Automatic Fusion Detection Logic
-                // If dropping a series onto a slot that ALREADY has a series
-                if (next[indexToUse].seriesUid && next[indexToUse].seriesUid !== seriesUid) {
-                    console.log(`[ViewerContext] Potential fusion detected at slot ${indexToUse}`);
-                    next[indexToUse] = {
-                        ...next[indexToUse],
-                        fusionSeriesUid: seriesUid,
-                        fusionOpacity: 0.5,
-                        fusionLUT: 'Hot Metal'
-                    };
-                } else {
-                    next[indexToUse] = {
-                        ...next[indexToUse],
-                        seriesUid,
-                        orientation: 'Default',
-                        voi: null,
-                        projectionMode: 'NORMAL',
-                        activeLUT: 'Grayscale',
-                        fusionSeriesUid: null
-                    };
-                }
-                console.log(`[ViewerContext] updated viewports[${indexToUse}] to ${seriesUid}`);
-                return next;
-            });
-            // If we explicitly targeted an index, make it active
-            if (targetIndex !== undefined) {
-                setActiveViewportIndex(targetIndex);
-            }
-        } else {
-            console.log(`[ViewerContext] Database mode: updating slot 0`);
-            setViewports(prev => {
-                const next = [...prev];
-                next[0] = {
-                    ...next[0],
-                    seriesUid,
+        setViewports(prev => {
+            const next = [...prev];
+            // Ensure the slot exists
+            if (!next[indexToUse]) {
+                console.warn(`[ViewerContext] target slot ${indexToUse} missing, creating...`);
+                next[indexToUse] = {
+                    id: `vp-${indexToUse}`,
+                    seriesUid: null,
                     orientation: 'Default',
                     voi: null,
                     projectionMode: 'NORMAL',
                     activeLUT: 'Grayscale',
-                    fusionSeriesUid: null
+                    fusionSeriesUid: null,
+                    fusionOpacity: 0.5,
+                    fusionLUT: 'Hot Metal'
                 };
-                return next;
-            });
+            }
+
+            next[indexToUse] = {
+                ...next[indexToUse],
+                seriesUid,
+                orientation: 'Default',
+                voi: null,
+                projectionMode: 'NORMAL',
+                activeLUT: 'Grayscale',
+                fusionSeriesUid: null
+            };
+            console.log(`[ViewerContext] updated viewports[${indexToUse}] to ${seriesUid}`);
+            return next;
+        });
+
+        // If we explicitly targeted an index, make it active
+        if (targetIndex !== undefined) {
+            setActiveViewportIndex(targetIndex);
         }
-    }, [activeView, activeViewportIndex]);
+    }, []); // No dependencies — uses ref for activeViewportIndex
 
     const handleViewChange = useCallback(async (view: ViewMode) => {
         // ALWAYS signal return to database regardless of local state
@@ -225,6 +200,11 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
                 next[activeViewportIndex] = { ...next[activeViewportIndex], orientation: view };
                 return next;
             });
+
+            // If we are currently in a special mode (MPR/3D/Database), switch to 2D viewer
+            if (activeView !== '2D') {
+                setActiveView('2D');
+            }
             return;
         }
 
@@ -234,6 +214,8 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
                 next[activeViewportIndex] = { ...next[activeViewportIndex], orientation: 'Acquisition' };
                 return next;
             });
+            setActiveView('2D');
+            return;
         }
 
         setActiveView(view);
@@ -326,7 +308,8 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
 
         const allTools = [
             'WindowLevel', 'Pan', 'Zoom', 'Length', 'EllipticalROI', 'RectangleROI',
-            'ArrowAnnotate', 'Probe', 'Angle', 'Bidirectional', 'Magnify', 'Crosshairs', 'StackScroll'
+            'ArrowAnnotate', 'Probe', 'Angle', 'Bidirectional', 'Magnify', 'Crosshairs', 'StackScroll',
+            StackScrollMouseWheelTool.toolName
         ];
 
         // Reset all to disabled (prevents zombie renders from passive tools)
@@ -375,17 +358,16 @@ export const ViewerProvider: React.FC<ViewerProviderProps> = ({ children, initia
                 bindings: [{ mouseButton: csToolsEnums.MouseBindings.Secondary }]
             });
         }
+
+        // Always enable Mouse Wheel for paging (2D & MPR)
+        if (toolGroup.hasTool(StackScrollMouseWheelTool.toolName)) {
+            toolGroup.setToolActive(StackScrollMouseWheelTool.toolName);
+        }
     }, [activeTool]);
 
-    // Global Render trigger (throttled by react cycle)
-    useEffect(() => {
-        try {
-            const engine = getRenderingEngine(RENDERING_ENGINE_ID);
-            engine?.render();
-        } catch (e) {
-            console.warn('[ViewerContext] render failed:', e);
-        }
-    }, [activeViewportIndex, activeView, viewports]);
+    // Global Render trigger removed - individual viewports handle their own render
+    // to avoid race conditions with container sizes during view transitions.
+
 
     const value: ViewerContextType = {
         activeView, setActiveView,

@@ -16,6 +16,7 @@ import { annotation } from '@cornerstonejs/tools';
 import { getRenderingEngine } from '@cornerstonejs/core';
 import { useViewer } from './ViewerContext';
 import { RENDERING_ENGINE_ID } from './types';
+import { calculateFusionStats, ROIStats } from './roiStatsUtils';
 
 interface AnnotationItem {
     id: string;
@@ -26,6 +27,7 @@ interface AnnotationItem {
     seriesInstanceUID: string;
     sliceIndex: number;
     viewportId: string;
+    fusionStats?: ROIStats | null;
 }
 
 export const AnnotationList: React.FC = () => {
@@ -33,56 +35,58 @@ export const AnnotationList: React.FC = () => {
     const [annotations, setAnnotations] = useState<AnnotationItem[]>([]);
 
     const refreshAnnotations = useCallback(() => {
-        annotation.state.getAnnotationManager();
-        const allAnnotations: AnnotationItem[] = [];
-
-        // Cornerstone doesn't provide a direct "get all" easily for the manager, 
-        // we usually iterate through frameOfReference or use state.getAnnotations
-        // For simplicity in this implementation, we rely on the active viewport's tool group
-        // and its specific tool names.
         const toolNames = ['Length', 'EllipticalROI', 'RectangleROI', 'ArrowAnnotate', 'Probe', 'Angle', 'Bidirectional'];
+        const activeViewport = viewports[activeViewportIndex];
+        const fusionSeriesUid = activeViewport?.fusionSeriesUid;
+        const fusionVolumeId = fusionSeriesUid ? `cornerstoneStreamingImageVolume:volume-${fusionSeriesUid}` : null;
 
-        toolNames.forEach(toolName => {
-            const annotationsForTool = (annotation.state as any).getAnnotations(toolName);
-            if (annotationsForTool) {
-                annotationsForTool.forEach((ann: any) => {
-                    // Extract display value logic
-                    let value = '';
-                    let unit = '';
+        const processStats = async () => {
+            const updatedAnnotations: AnnotationItem[] = [];
 
-                    if (ann.cachedStats) {
-                        const stats = ann.cachedStats;
-                        if (stats.length) { value = stats.length.toFixed(2); unit = 'mm'; }
-                        else if (stats.area) { value = stats.area.toFixed(2); unit = 'mm²'; }
-                        else if (stats.index !== undefined) { value = stats.index.toString(); unit = 'idx'; }
-                        else if (stats.angle) { value = stats.angle.toFixed(1); unit = '°'; }
+            for (const toolName of toolNames) {
+                const annotationsForTool = (annotation.state as any).getAnnotations(toolName);
+                if (annotationsForTool) {
+                    for (const ann of annotationsForTool) {
+                        let value = '';
+                        let unit = '';
+
+                        if (ann.cachedStats) {
+                            const stats = ann.cachedStats;
+                            if (stats.length) { value = stats.length.toFixed(2); unit = 'mm'; }
+                            else if (stats.area) { value = stats.area.toFixed(2); unit = 'mm²'; }
+                            else if (stats.index !== undefined) { value = stats.index.toString(); unit = 'idx'; }
+                            else if (stats.angle) { value = stats.angle.toFixed(1); unit = '°'; }
+                        }
+
+                        let fusionStats: ROIStats | null = null;
+                        if (fusionVolumeId && (toolName === 'EllipticalROI' || toolName === 'RectangleROI')) {
+                            fusionStats = await calculateFusionStats(ann, fusionVolumeId);
+                        }
+
+                        updatedAnnotations.push({
+                            id: ann.annotationUID,
+                            toolName: toolName,
+                            label: ann.data?.text || toolName,
+                            value: value || '-',
+                            unit: unit,
+                            seriesInstanceUID: ann.metadata.SeriesInstanceUID,
+                            sliceIndex: ann.metadata.sliceIndex ?? 0,
+                            viewportId: ann.metadata.viewportId || '',
+                            fusionStats
+                        });
                     }
-
-                    allAnnotations.push({
-                        id: ann.annotationUID,
-                        toolName: toolName,
-                        label: ann.data?.text || toolName,
-                        value: value || '-',
-                        unit: unit,
-                        seriesInstanceUID: ann.metadata.SeriesInstanceUID,
-                        sliceIndex: ann.metadata.sliceIndex ?? 0,
-                        viewportId: ann.metadata.viewportId || ''
-                    });
-                });
+                }
             }
-        });
+            setAnnotations(updatedAnnotations);
+        };
 
-        setAnnotations(allAnnotations);
-    }, []);
+        processStats();
+    }, [viewports, activeViewportIndex]);
 
     useEffect(() => {
         refreshAnnotations();
 
-        // Listen for changes
         const handleAnnotationChange = () => refreshAnnotations();
-
-        // This is a bit of a hack as Cornerstone doesn't have a single "state changed" event for all tools
-        // but we can listen to general mouse up on the viewport as a proxy, or specific events
         window.addEventListener('mouseup', handleAnnotationChange);
 
         return () => {
@@ -94,7 +98,6 @@ export const AnnotationList: React.FC = () => {
         const engine = getRenderingEngine(RENDERING_ENGINE_ID);
         if (!engine) return;
 
-        // Find the best viewport to jump in (prioritize active or matching sequence)
         const viewportId = viewports[activeViewportIndex]?.id || ann.viewportId;
         const viewport = engine.getViewport(viewportId);
 
@@ -175,6 +178,26 @@ export const AnnotationList: React.FC = () => {
                                     <span className="text-lg font-black text-peregrine-accent tabular-nums">{ann.value}</span>
                                     <span className="text-[9px] font-bold text-white/30 uppercase">{ann.unit}</span>
                                 </div>
+
+                                {ann.fusionStats && (
+                                    <div className="mt-2 pt-2 border-t border-white/5 grid grid-cols-3 gap-2">
+                                        <div className="flex flex-col">
+                                            <span className="text-[7px] text-white/40 font-bold uppercase">SUV Mean</span>
+                                            <span className="text-[11px] font-black text-orange-400 tabular-nums">{ann.fusionStats.mean.toFixed(2)}</span>
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-[7px] text-white/40 font-bold uppercase">SUV Max</span>
+                                            <span className="text-[11px] font-black text-orange-500 tabular-nums">{ann.fusionStats.max.toFixed(2)}</span>
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-[7px] text-white/40 font-bold uppercase">Volume</span>
+                                            <div className="flex items-baseline gap-0.5">
+                                                <span className="text-[11px] font-black text-white/80 tabular-nums">{ann.fusionStats.volume.toFixed(2)}</span>
+                                                <span className="text-[7px] text-white/40 font-bold">cm³</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
 
                                 {/* Selection indicator (if we had active state) */}
                                 <div className="absolute right-2 bottom-2 text-[8px] font-black text-white/10 uppercase italic">

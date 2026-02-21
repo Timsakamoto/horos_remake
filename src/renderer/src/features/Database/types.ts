@@ -13,6 +13,8 @@ export interface Patient {
     accessionNumber?: string;
     studyDate?: string;
     institutionName?: string;
+    studyInstanceUID?: string;
+    studyId?: number;
     userComments?: string;
 }
 

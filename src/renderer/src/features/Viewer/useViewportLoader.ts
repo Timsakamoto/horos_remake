@@ -59,7 +59,7 @@ export const useViewportLoader = ({
     initialWindowWidth,
     initialWindowCenter
 }: UseViewportLoaderProps) => {
-    const { db, prefetchStudyThumbnails } = useDatabase();
+    const { prefetchStudyThumbnails } = useDatabase();
     const { databasePath } = useSettings();
 
     const [isReady, setIsReady] = useState(false);
@@ -79,8 +79,20 @@ export const useViewportLoader = ({
     const THROTTLE_MS = 32; // ~30fps - prevents react render flood
 
     const loadSeries = useCallback(async () => {
-        if (!db || !seriesUid || !element || !mountedRef.current) {
-            if (seriesUid && !element) console.warn(`[useViewportLoader] ${viewportId}: Load deferred - element is null`);
+        if (!seriesUid || !element || !mountedRef.current) {
+            // Further silence deferred logs for thumbnails/previews
+            if (seriesUid && !element && !isThumbnail && viewportId.startsWith('viewport-')) {
+                console.debug(`[useViewportLoader] ${viewportId}: Load deferred - element is null`);
+            }
+            return;
+        }
+
+        // Avoid loading if viewport is too small (Cornerstone requirements)
+        // Adjust threshold to 10px to avoid race conditions with 1x1 initial sizes
+        if (element.clientWidth < 10 || element.clientHeight < 10) {
+            if (!isThumbnail) {
+                console.log(`[useViewportLoader] ${viewportId}: Load deferred - viewport too small (${element.clientWidth}x${element.clientHeight})`);
+            }
             return;
         }
 
@@ -92,7 +104,6 @@ export const useViewportLoader = ({
         let hasMultiFrame = false;
         let images: any[] = [];
 
-        const isVolumeView = isVolumeOrientation && !hasMultiFrame;
 
         // Fast Switch Optimization (Volume)
         if (isVolumeOrientation && seriesUid === lastSeriesUidRef.current && isReady) {
@@ -133,7 +144,6 @@ export const useViewportLoader = ({
         }
 
         // Full Reload Logic
-        setIsComposed(false);
         setIsReady(false);
         setVolumeProgress(0);
         setStatus('Loading Series...');
@@ -141,20 +151,20 @@ export const useViewportLoader = ({
         lastSeriesUidRef.current = seriesUid;
         lastOrientationRef.current = orientation;
 
-        // Small delay to allow UI to breathe
-        await new Promise(resolve => setTimeout(resolve, 50));
-
         try {
             // Re-using ids, hasMultiFrame, images declared above
             if (isThumbnail && initialImageId) {
                 console.log(`[useViewportLoader] Loading THUMBNAIL for ${seriesUid}: ${initialImageId}`);
                 // For thumbnails, prefix and use initialImageId immediately
-                ids = [`electronfile:${initialImageId.replace('electronfile:', '')}`];
+                ids = [`electronfile://${initialImageId.replace('electronfile://', '').replace('electronfile:', '')}`];
             } else {
-                images = await db.images.find({
-                    selector: { seriesInstanceUID: seriesUid },
-                    sort: [{ instanceNumber: 'asc' }]
-                }).exec();
+                images = await (window as any).electron.db.query(
+                    `SELECT i.* FROM instances i 
+                     JOIN series s ON i.seriesId = s.id 
+                     WHERE s.seriesInstanceUID = ? 
+                     ORDER BY i.instanceNumber ASC`,
+                    [seriesUid]
+                );
 
                 images.forEach((img: any) => {
                     let fullPath = img.filePath;
@@ -165,11 +175,12 @@ export const useViewportLoader = ({
 
                     if (img.numberOfFrames > 1) {
                         hasMultiFrame = true;
-                        for (let i = 0; i < img.numberOfFrames; i++) {
-                            ids.push(`electronfile:${fullPath}?frame=${i}`);
+                        // Use a consistent SOP-based ID for framing
+                        for (let f = 0; f < img.numberOfFrames; f++) {
+                            ids.push(`electronfile://${fullPath}?seriesUid=${seriesUid}&frame=${f}`);
                         }
                     } else {
-                        ids.push(`electronfile:${fullPath}`);
+                        ids.push(`electronfile://${fullPath}?seriesUid=${seriesUid}`);
                     }
                 });
             }
@@ -178,6 +189,9 @@ export const useViewportLoader = ({
                 setStatus('No images.');
                 return;
             }
+
+            // Compute isVolumeView AFTER we know hasMultiFrame (from DB query above)
+            const isVolumeView = isVolumeOrientation && !hasMultiFrame;
 
             let renderingEngine = getRenderingEngine(renderingEngineId);
             if (!renderingEngine) renderingEngine = new RenderingEngine(renderingEngineId);
@@ -190,19 +204,18 @@ export const useViewportLoader = ({
                 try { renderingEngine.disableElement(viewportId); } catch (e) { }
             }
 
-            await prefetchMetadata(ids);
-
-            // Metadata Sorting (Skip for thumbnails)
-            if (!isThumbnail && ids.length > 1) {
-                // Head-First Sorting
-                ids.sort((a, b) => {
-                    const lpA = metaData.get('imagePlaneModule', a)?.sliceLocation ?? 0;
-                    const lpB = metaData.get('imagePlaneModule', b)?.sliceLocation ?? 0;
-                    return lpB - lpA;
-                });
+            if (isThumbnail) {
+                console.log(`[useViewportLoader] ${viewportId}: Loading thumbnail for ${seriesUid}`);
             }
+            if (element.clientWidth === 0 || element.clientHeight === 0) {
+                console.warn(`[useViewportLoader] Viewport element for ${viewportId} has 0 dimensions, scheduling retry in 100ms...`);
+                hasValidDimensionsRef.current = false;
+                setTimeout(loadSeries, 100);
+                return;
+            }
+            hasValidDimensionsRef.current = true;
 
-            if (!mountedRef.current) return;
+            if (!mountedRef.current || !element) return;
 
             const viewportInput: Types.PublicViewportInput = {
                 viewportId,
@@ -210,13 +223,6 @@ export const useViewportLoader = ({
                 element,
                 defaultOptions: { background: [0, 0, 0] },
             };
-
-            if (element.clientWidth === 0 || element.clientHeight === 0) {
-                console.warn(`[useViewportLoader] Viewport element for ${viewportId} has 0 dimensions, waiting for resize...`);
-                hasValidDimensionsRef.current = false;
-                return;
-            }
-            hasValidDimensionsRef.current = true;
 
             if (!renderingEngine.getViewport(viewportId)) {
                 try {
@@ -229,7 +235,36 @@ export const useViewportLoader = ({
                 }
             }
             renderingEngine.resize();
+            // CRITICAL: Re-render ALL viewports after global resize to prevent blanking
+            renderingEngine.render();
             setIsReady(true);
+
+            // OPTIMIZATION: Prefetch metadata in parallel for 2D, but AWAIT for 3D/Volume
+            const prefetchPromise = prefetchMetadata(ids);
+            if (isVolumeView) {
+                await prefetchPromise;
+            }
+
+            // Metadata Sorting (Skip for thumbnails and handle multi-frame stability)
+            if (!isThumbnail && ids.length > 1) {
+                // Determine if we should sort. For single-file multi-frame Cine, we MUST NOT sort by space.
+                const isSingleFileMultiFrame = hasMultiFrame && images.length === 1;
+
+                if (!isSingleFileMultiFrame) {
+                    // Head-First Sorting with Instance Tie-breaker
+                    ids.sort((a, b) => {
+                        const lpA = metaData.get('imagePlaneModule', a)?.sliceLocation ?? 0;
+                        const lpB = metaData.get('imagePlaneModule', b)?.sliceLocation ?? 0;
+                        const diff = lpB - lpA;
+
+                        if (Math.abs(diff) > 0.001) return diff;
+
+                        // Fallback to frame/instance order to keep temporal sequences stable
+                        const getFrame = (id: string) => parseInt(new URLSearchParams(id.split('?')[1] || '').get('frame') || '0');
+                        return getFrame(a) - getFrame(b);
+                    });
+                }
+            }
 
             let initialIndex = 0;
             if (initialImageId) {
@@ -267,10 +302,10 @@ export const useViewportLoader = ({
                     const fusionVolumeId = `cornerstoneStreamingImageVolume:volume-${fusionSeriesUid}`;
 
                     // Load fusion images
-                    const fusionImages = await db.images.find({
-                        selector: { seriesInstanceUID: fusionSeriesUid },
-                        sort: [{ instanceNumber: 'asc' }]
-                    }).exec();
+                    const fusionImages = await (window as any).electron.db.query(
+                        'SELECT * FROM instances WHERE seriesId = (SELECT id FROM series WHERE seriesInstanceUID = ?) ORDER BY instanceNumber ASC',
+                        [fusionSeriesUid]
+                    );
 
                     const fusionIds = fusionImages.map((img: any) => {
                         let fullPath = img.filePath;
@@ -278,7 +313,7 @@ export const useViewportLoader = ({
                             const sep = databasePath.includes('\\') ? '\\' : '/';
                             fullPath = `${databasePath.replace(/[\\/]$/, '')}${sep}${fullPath.replace(/^[\\/]/, '')}`;
                         }
-                        return `electronfile:${fullPath}`;
+                        return `electronfile://${fullPath}`;
                     });
 
                     if (fusionSeriesUid) {
@@ -354,7 +389,9 @@ export const useViewportLoader = ({
                             'PET': 'pet',
                             'Rainbow': 'rainbow',
                             'Jet': 'jet',
-                            'Hot': 'hot'
+                            'HotIron': 'hotiron',
+                            'Hot': 'hot',
+                            'Cool': 'cool'
                         };
                         const colormapId = fColormapMap[fusionLUT || 'Hot Metal'] || 'hotiron';
                         if (colormapId) {
@@ -374,18 +411,21 @@ export const useViewportLoader = ({
 
                 // --- ★ Apply MIP & LUT ★ ---
                 const volumeActor = viewport.getActor(volumeId)?.actor as any;
-                if (volumeActor) {
-                    // Set Blend Mode
+                if (volumeActor && viewport.type === Enums.ViewportType.ORTHOGRAPHIC) {
                     const isMIP = projectionMode === 'MIP';
-                    volumeActor.getProperty().setBlendMode(isMIP ? Enums.BlendModes.MAXIMUM_INTENSITY_BLEND : Enums.BlendModes.COMPOSITE);
+                    (viewport as any).setBlendMode(isMIP ? Enums.BlendModes.MAXIMUM_INTENSITY_BLEND : Enums.BlendModes.COMPOSITE, volumeId);
 
-                    // Set Color LUT
                     if (activeLUT && activeLUT !== 'Grayscale') {
-                        // In a real Horos/Cornerstone app, you'd map activeLUT to actual RGB transfer functions
-                        // Here we apply a standard hot-metal or jet colormap placeholder
-                        console.log(`[useViewportLoader] Applying LUT: ${activeLUT}`);
-                        // Example: viewport.setProperties({ colormap: { name: activeLUT } }); 
-                        // Note: actual colormap names depend on @cornerstonejs/core standard ones
+                        // In a real Horos/Cornerstone app, we'd map this to full transfer functions.
+                        // Here we use the colormap property for simpler integration.
+                        const colormapMap: Record<string, string> = {
+                            'Hot Metal': 'hotiron',
+                            'PET': 'pet',
+                            'Rainbow': 'rainbow',
+                            'Jet': 'jet'
+                        };
+                        const colormapId = colormapMap[activeLUT] || '';
+                        if (colormapId) viewport.setProperties({ colormap: { name: colormapId } }, volumeId);
                     }
                 }
 
@@ -464,7 +504,13 @@ export const useViewportLoader = ({
             setStatus('Rendering...');
 
             // --- ★ Thumbnail/Volume/Stack: Set isComposed immediately to ensure visibility ---
-            setTimeout(() => { if (mountedRef.current) setIsComposed(true); }, 100);
+            console.log(`[useViewportLoader] ${viewportId}: Data fetched, composing viewport...`);
+            setTimeout(() => {
+                if (mountedRef.current) {
+                    setIsComposed(true);
+                    console.log(`[useViewportLoader] ${viewportId}: Viewport composed successfully.`);
+                }
+            }, 100);
 
             // Set Initial VOI
             setTimeout(async () => {
@@ -493,9 +539,9 @@ export const useViewportLoader = ({
                     }));
                 } else {
                     // Fetch full metadata for overlays (Main Viewer Only)
-                    const subseries = await db.series.findOne(seriesUid).exec();
-                    const study = subseries ? await db.studies.findOne({ selector: { studyInstanceUID: subseries.studyInstanceUID } }).exec() : null;
-                    const patient = study ? await db.patients.findOne({ selector: { id: study.patientId } }).exec() : null;
+                    const subseries = await (window as any).electron.db.get('SELECT * FROM series WHERE seriesInstanceUID = ?', [seriesUid]);
+                    const study = subseries ? await (window as any).electron.db.get('SELECT * FROM studies WHERE studyInstanceUID = ?', [subseries.studyInstanceUID]) : null;
+                    const patient = study ? await (window as any).electron.db.get('SELECT * FROM patients WHERE id = ?', [study.patientId]) : null;
 
                     setMetadata(prev => ({
                         ...prev,
@@ -531,11 +577,10 @@ export const useViewportLoader = ({
             }, 50);
 
         } catch (err) {
-            console.error('[useViewportLoader] Load Error:', err);
+            console.error(`[useViewportLoader] ${viewportId}: ❌ Load Error for series ${seriesUid}:`, err);
             setStatus('Load Failed');
         }
     }, [
-        db,
         seriesUid,
         viewportId,
         renderingEngineId,
@@ -553,18 +598,50 @@ export const useViewportLoader = ({
     ]);
 
     // Dimension Observer
+    const retryCountRef = useRef(0);
+    const MAX_RETRIES = 50; // 5 seconds total
+
     useEffect(() => {
-        if (!element) return;
+        if (!element || !seriesUid) return;
+
+        const checkSizeAndInit = async () => {
+            // Again, require at least 10px to consider the element "ready"
+            if (element.clientWidth < 10 || element.clientHeight < 10) {
+                if (retryCountRef.current < MAX_RETRIES) {
+                    retryCountRef.current++;
+                    if (!isThumbnail) {
+                        console.debug(`[useViewportLoader] ${viewportId}: Element size ${element.clientWidth}x${element.clientHeight}, retrying (${retryCountRef.current}/${MAX_RETRIES})...`);
+                    }
+                    setTimeout(checkSizeAndInit, 100);
+                } else {
+                    console.error(`[useViewportLoader] ${viewportId}: Gave up waiting for element size after ${MAX_RETRIES} attempts.`);
+                    setStatus(`Error: Container size too small (${element.clientWidth}x${element.clientHeight})`);
+                }
+                return;
+            }
+
+            console.log(`[useViewportLoader] ${viewportId}: Element size ready: ${element.clientWidth}x${element.clientHeight}`);
+            retryCountRef.current = 0; // Reset on success
+            loadSeries(); // Trigger the main load logic
+        };
+
+        // Initial check
+        checkSizeAndInit();
+
         const observer = new ResizeObserver(entries => {
             for (const entry of entries) {
                 const { width, height } = entry.contentRect;
 
-                if (width > 0 && height > 0) {
+                if (width >= 10 && height >= 10) {
                     const now = Date.now();
                     if (now - lastResizeTimeRef.current > 33) {
                         const engine = getRenderingEngine(renderingEngineId);
                         if (engine) {
-                            try { engine.resize(); } catch (e) { }
+                            try {
+                                engine.resize();
+                                // CRITICAL: Re-render ALL viewports to prevent blanking others
+                                engine.render();
+                            } catch (e) { }
                         }
                         lastResizeTimeRef.current = now;
                     }

@@ -2,7 +2,7 @@ import { EventEmitter } from 'events';
 
 export interface PACSJob {
     id: string;
-    type: 'C-MOVE' | 'C-FIND' | 'C-ECHO' | 'C-STORE';
+    type: 'C-MOVE' | 'C-FIND' | 'C-ECHO' | 'C-STORE' | 'IMPORT';
     status: 'pending' | 'active' | 'completed' | 'failed';
     description: string;
     progress: number; // 0-100

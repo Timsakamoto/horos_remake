@@ -65,7 +65,7 @@ export const PatientBrowser: React.FC<PatientBrowserProps> = ({
                                 onClick={() => handlePatientClick(patient.id)}
                                 className={`
                                     group flex items-center gap-3 px-3.5 py-2.5 rounded-xl cursor-pointer transition-all duration-200
-                                    ${selectedId === patient.id
+                                    ${String(selectedId) === String(patient.id)
                                         ? 'bg-blue-50/80 shadow-[0_2px_8px_rgba(37,99,235,0.06)]'
                                         : 'hover:bg-gray-50'
                                     }

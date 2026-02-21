@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { AntigravityDatabase } from '../db';
 
 interface DeletionTarget {
     type: 'patient' | 'study' | 'series';
@@ -7,84 +6,80 @@ interface DeletionTarget {
     name: string;
 }
 
-export const useDatabaseDeletion = (db: AntigravityDatabase | null) => {
+export const useDatabaseDeletion = () => {
     const [deletionTarget, setDeletionTarget] = useState<DeletionTarget | null>(null);
     const [lastDeletionTime, setLastDeletionTime] = useState(0);
 
-    const deleteSeries = async (seriesUid: string, deleteFiles: boolean, skipParentCleanup = false) => {
-        if (!db) return;
+    const deleteFilesForRecord = async (type: 'patient' | 'study' | 'series', id: string) => {
+        let query = '';
+        let params: any[] = [];
+
+        if (type === 'patient') {
+            query = `
+                SELECT i.filePath 
+                FROM instances i
+                JOIN series s ON i.seriesId = s.id
+                JOIN studies st ON s.studyId = st.id
+                WHERE st.patientId = ?
+            `;
+            params = [id];
+        } else if (type === 'study') {
+            query = `
+                SELECT i.filePath 
+                FROM instances i
+                JOIN series s ON i.seriesId = s.id
+                WHERE s.studyId = (SELECT id FROM studies WHERE studyInstanceUID = ?)
+            `;
+            params = [id];
+        } else if (type === 'series') {
+            query = `
+                SELECT i.filePath 
+                FROM instances i
+                JOIN series s ON i.seriesId = s.id
+                WHERE s.seriesInstanceUID = ?
+            `;
+            params = [id];
+        }
+
         try {
-            const seriesDoc = await db.series.findOne(seriesUid).exec();
-            if (!seriesDoc) return;
-
-            const studyUid = seriesDoc.studyInstanceUID;
-
-            // Delete associated images
-            const images = await db.images.find({ selector: { seriesInstanceUID: seriesUid } }).exec();
-            for (const img of images) {
-                if (deleteFiles && img.filePath) {
-                    try {
-                        // @ts-ignore
-                        await window.electron.unlink(img.filePath);
-                    } catch (e) {
-                        console.error(`Failed to delete file: ${img.filePath}`, e);
-                    }
-                }
-                await img.remove();
-            }
-
-            await seriesDoc.remove();
-
-            if (!skipParentCleanup && studyUid) {
-                const remainingSeries = await db.series.count({ selector: { studyInstanceUID: studyUid } }).exec();
-                if (remainingSeries === 0) {
-                    await deleteStudy(studyUid, deleteFiles);
+            // @ts-ignore
+            const files = await window.electron.db.query(query, params);
+            for (const f of files) {
+                if (f.filePath) {
+                    // @ts-ignore
+                    await window.electron.unlink(f.filePath);
                 }
             }
-        } catch (err) {
-            console.error('Delete series failed:', err);
+        } catch (e) {
+            console.error('[Deletion] Failed to cleanup files:', e);
         }
     };
 
-    const deleteStudy = async (studyUid: string, deleteFiles: boolean, skipParentCleanup = false) => {
-        if (!db) return;
+    const performDeletion = async (type: 'patient' | 'study' | 'series', id: string, deleteFiles: boolean) => {
         try {
-            const studyDoc = await db.studies.findOne(studyUid).exec();
-            if (!studyDoc) return;
-
-            const patientId = studyDoc.patientId;
-
-            const seriesDocs = await db.series.find({ selector: { studyInstanceUID: studyUid } }).exec();
-            for (const s of seriesDocs) {
-                await deleteSeries(s.seriesInstanceUID, deleteFiles, true);
+            if (deleteFiles) {
+                await deleteFilesForRecord(type, id);
             }
 
-            await studyDoc.remove();
+            let sql = '';
+            let params: any[] = [];
 
-            if (!skipParentCleanup && patientId) {
-                const remainingStudies = await db.studies.count({ selector: { patientId } }).exec();
-                if (remainingStudies === 0) {
-                    await deletePatient(patientId, deleteFiles);
-                }
+            if (type === 'patient') {
+                sql = 'DELETE FROM patients WHERE id = ?';
+                params = [id];
+            } else if (type === 'study') {
+                sql = 'DELETE FROM studies WHERE studyInstanceUID = ?';
+                params = [id];
+            } else if (type === 'series') {
+                sql = 'DELETE FROM series WHERE seriesInstanceUID = ?';
+                params = [id];
             }
+
+            // @ts-ignore
+            await window.electron.db.run(sql, params);
+            setLastDeletionTime(Date.now());
         } catch (err) {
-            console.error('Delete study failed:', err);
-        }
-    };
-
-    const deletePatient = async (patientId: string, deleteFiles: boolean) => {
-        if (!db) return;
-        try {
-            const studiesDocs = await db.studies.find({ selector: { patientId } }).exec();
-            for (const s of studiesDocs) {
-                await deleteStudy(s.studyInstanceUID, deleteFiles, true);
-            }
-            const patientDoc = await db.patients.findOne(patientId).exec();
-            if (patientDoc) {
-                await patientDoc.remove();
-            }
-        } catch (err) {
-            console.error('Delete patient failed:', err);
+            console.error('[Deletion] SQLite deletion failed:', err);
         }
     };
 
@@ -102,9 +97,7 @@ export const useDatabaseDeletion = (db: AntigravityDatabase | null) => {
         const { type, id } = deletionTarget;
 
         try {
-            if (type === 'patient') await deletePatient(id, deleteFiles);
-            else if (type === 'study') await deleteStudy(id, deleteFiles);
-            else if (type === 'series') await deleteSeries(id, deleteFiles);
+            await performDeletion(type, id, deleteFiles);
             setLastDeletionTime(Date.now());
         } catch (err) {
             console.error('Final deletion failed:', err);

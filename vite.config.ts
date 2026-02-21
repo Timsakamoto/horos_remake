@@ -9,13 +9,34 @@ export default defineConfig({
         react(),
         electron({
             main: {
-                // Shortcut of `build.lib.entry`.
-                entry: 'src/main/index.ts',
+                entry: {
+                    index: 'src/main/index.ts',
+                    dicomWorker: 'src/main/database/dicomWorker.ts'
+                },
+                vite: {
+                    build: {
+                        rollupOptions: {
+                            external: ['better-sqlite3'],
+                            output: {
+                                entryFileNames: '[name].js',
+                                chunkFileNames: '[name].js',
+                                assetFileNames: '[name].[ext]',
+                            }
+                        },
+                    },
+                },
             },
             preload: {
                 // Shortcut of `build.rollupOptions.input`.
                 // Preload scripts may contain Web assets, so use the `build.rollupOptions.input` instead `build.lib.entry`.
                 input: 'src/main/preload.ts',
+                vite: {
+                    build: {
+                        rollupOptions: {
+                            external: ['better-sqlite3'],
+                        },
+                    },
+                },
             },
             // Ployfill the Electron and Node.js built-in modules for Renderer process.
             // See 👉 https://github.com/electron-vite/vite-plugin-electron-renderer

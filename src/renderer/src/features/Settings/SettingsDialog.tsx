@@ -163,10 +163,22 @@ export const SettingsDialog: React.FC = () => {
                                         onClick={async () => {
                                             if (window.confirm('Are you sure you want to reset the database? All records will be wiped and automatically re-imported. Files on disk are safe.')) {
                                                 try {
-                                                    const { removeDatabase } = await import('../Database/db');
                                                     localStorage.setItem('peregrine_reimport_after_reset', 'true');
-                                                    await removeDatabase();
-                                                    // Add a small delay for IndexedDB to settle before reload
+                                                    // Disable FKs to avoid "no such table" errors on broken constraints
+                                                    // @ts-ignore
+                                                    await window.electron.db.run('PRAGMA foreign_keys = OFF');
+                                                    // @ts-ignore
+                                                    await window.electron.db.run('DELETE FROM instances');
+                                                    // @ts-ignore
+                                                    await window.electron.db.run('DELETE FROM series');
+                                                    // @ts-ignore
+                                                    await window.electron.db.run('DELETE FROM studies');
+                                                    // @ts-ignore
+                                                    await window.electron.db.run('DELETE FROM patients');
+                                                    // @ts-ignore
+                                                    await window.electron.db.run('PRAGMA foreign_keys = ON');
+
+                                                    // Add a small delay for DB to settle before reload
                                                     setTimeout(() => {
                                                         window.location.reload();
                                                     }, 500);

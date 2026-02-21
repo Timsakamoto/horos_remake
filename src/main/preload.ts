@@ -51,6 +51,54 @@ const api = {
             ipcRenderer.on('watcher:filesAdded', listener);
             return () => ipcRenderer.removeListener('watcher:filesAdded', listener);
         }
+    },
+    db: {
+        query: (sql: string, params?: any[]) => ipcRenderer.invoke('db:query', sql, params),
+        get: (sql: string, params?: any[]) => ipcRenderer.invoke('db:get', sql, params),
+        run: (sql: string, params?: any[]) => ipcRenderer.invoke('db:run', sql, params),
+        transaction: (operations: { sql: string; params: any[] }[]) => ipcRenderer.invoke('db:transaction', operations),
+        importFiles: (filePaths: string[]) => ipcRenderer.invoke('db:importFiles', filePaths),
+        onImportProgress: (callback: (data: { progress: number; message: string }) => void) => {
+            const listener = (_: any, data: any) => callback(data);
+            ipcRenderer.on('db:importProgress', listener);
+            return () => ipcRenderer.removeListener('db:importProgress', listener);
+        },
+        onDeleteRequest: (callback: (type: string, data: any) => void) => {
+            const listener = (_: any, type: string, data: any) => callback(type, data);
+            ipcRenderer.on('db:deleteRequest', listener);
+            return () => ipcRenderer.removeListener('db:deleteRequest', listener);
+        },
+        onExport: (callback: (type: string, data: any) => void) => {
+            const listener = (_: any, type: string, data: any) => callback(type, data);
+            ipcRenderer.on('db:export', listener);
+            return () => ipcRenderer.removeListener('db:export', listener);
+        },
+        onViewTags: (callback: (type: string, data: any) => void) => {
+            const listener = (_: any, type: string, data: any) => callback(type, data);
+            ipcRenderer.on('db:viewTags', listener);
+            return () => ipcRenderer.removeListener('db:viewTags', listener);
+        },
+        onDataUpdated: (callback: () => void) => {
+            const listener = () => callback();
+            ipcRenderer.on('db:dataUpdated', listener);
+            return () => ipcRenderer.removeListener('db:dataUpdated', listener);
+        }
+    },
+    showContextMenu: (type: 'study' | 'series', data: any) => ipcRenderer.invoke('app:showContextMenu', type, data),
+    onNavigateTo: (callback: (page: string) => void) => {
+        const listener = (_: any, page: string) => callback(page);
+        ipcRenderer.on('app:navigateTo', listener);
+        return () => ipcRenderer.removeListener('app:navigateTo', listener);
+    },
+    onTriggerImport: (callback: () => void) => {
+        const listener = () => callback();
+        ipcRenderer.on('app:triggerImport', listener);
+        return () => ipcRenderer.removeListener('app:triggerImport', listener);
+    },
+    onTriggerSend: (callback: () => void) => {
+        const listener = () => callback();
+        ipcRenderer.on('app:triggerSend', listener);
+        return () => ipcRenderer.removeListener('app:triggerSend', listener);
     }
 }
 

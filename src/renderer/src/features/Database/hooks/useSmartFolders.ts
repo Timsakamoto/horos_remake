@@ -1,48 +1,57 @@
 import { useState, useEffect, useCallback } from 'react';
-import { AntigravityDatabase } from '../db';
-import { SmartFolderDocType } from '../schema/smartFolder.schema';
 import { SearchFilters, emptyFilters } from '../types';
 
 export const useSmartFolders = (
-    db: AntigravityDatabase | null,
     searchFilters: SearchFilters,
     setSearchFilters: (filters: SearchFilters) => void
 ) => {
-    const [smartFolders, setSmartFolders] = useState<SmartFolderDocType[]>([]);
+    const [smartFolders, setSmartFolders] = useState<any[]>([]);
     const [activeSmartFolderId, setActiveSmartFolderId] = useState<string | null>(null);
 
-    const seedDefaultSmartFolders = useCallback(async (database: AntigravityDatabase) => {
+    const refreshSmartFolders = useCallback(async () => {
         try {
-            const count = await database.smart_folders.count().exec();
-            if (count > 0) return;
+            // @ts-ignore
+            const docs = await window.electron.db.query('SELECT * FROM smart_folders ORDER BY createdAt DESC');
+            setSmartFolders(docs.map((d: any) => ({
+                ...d,
+                query: JSON.parse(d.query)
+            })));
+        } catch (err) {
+            console.error('Failed to fetch smart folders:', err);
+        }
+    }, []);
+
+    const seedDefaultSmartFolders = useCallback(async () => {
+        try {
+            // @ts-ignore
+            const countObj = await window.electron.db.get('SELECT COUNT(*) as count FROM smart_folders');
+            if (countObj.count > 0) return;
 
             console.log('useSmartFolders: Seeding default smart folders...');
-            const defaults: SmartFolderDocType[] = [
+            const defaults = [
                 {
                     id: 'all',
                     name: 'All Patients',
                     icon: 'Database',
-                    query: {},
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
+                    query: JSON.stringify({})
                 },
                 {
                     id: 'recent_ct',
                     name: 'Recent CTs',
                     icon: 'Layers',
-                    query: { modality: ['CT'] },
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
+                    query: JSON.stringify({ modalities: ['CT'] })
                 }
             ];
 
             for (const folder of defaults) {
-                await database.smart_folders.insert(folder);
+                // @ts-ignore
+                await window.electron.db.run('INSERT INTO smart_folders (id, name, icon, query) VALUES (?, ?, ?, ?)', [folder.id, folder.name, folder.icon, folder.query]);
             }
+            await refreshSmartFolders();
         } catch (err) {
             console.error('Failed to seed smart folders:', err);
         }
-    }, []);
+    }, [refreshSmartFolders]);
 
     const applySmartFolder = useCallback((id: string | null) => {
         setActiveSmartFolderId(id);
@@ -54,49 +63,35 @@ export const useSmartFolders = (
         if (folder) {
             setSearchFilters({
                 ...emptyFilters,
-                ...folder.query,
-                dateRange: {
-                    start: folder.query.studyDateStart || '',
-                    end: folder.query.studyDateEnd || ''
-                },
-                modalities: folder.query.modality || []
+                ...folder.query
             });
         }
     }, [smartFolders, setSearchFilters]);
 
     const saveSmartFolder = useCallback(async (name: string, icon: string = 'Folder') => {
-        if (!db) return;
         const id = `smart_${Date.now()}`;
+        const queryJson = JSON.stringify({
+            patientName: searchFilters.patientName,
+            patientID: searchFilters.patientID,
+            modalities: searchFilters.modalities,
+            dateRange: searchFilters.dateRange,
+            institutionName: searchFilters.institutionName
+        });
+
         try {
-            await db.smart_folders.insert({
-                id,
-                name,
-                icon,
-                query: {
-                    patientName: searchFilters.patientName,
-                    patientID: searchFilters.patientID,
-                    modality: searchFilters.modalities,
-                    studyDateStart: searchFilters.dateRange.start,
-                    studyDateEnd: searchFilters.dateRange.end,
-                    institutionName: searchFilters.institutionName
-                },
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            });
+            // @ts-ignore
+            await window.electron.db.run('INSERT INTO smart_folders (id, name, icon, query) VALUES (?, ?, ?, ?)', [id, name, icon, queryJson]);
+            await refreshSmartFolders();
             setActiveSmartFolderId(id);
         } catch (err) {
             console.error('Failed to save smart folder:', err);
         }
-    }, [db, searchFilters]);
+    }, [searchFilters, refreshSmartFolders]);
 
     useEffect(() => {
-        if (!db) return;
-        seedDefaultSmartFolders(db);
-        const sub = db.smart_folders.find({ sort: [{ updatedAt: 'desc' }] }).$.subscribe(docs => {
-            setSmartFolders(docs.map(d => d.toJSON() as any));
-        });
-        return () => sub.unsubscribe();
-    }, [db, seedDefaultSmartFolders]);
+        seedDefaultSmartFolders();
+        refreshSmartFolders();
+    }, [seedDefaultSmartFolders, refreshSmartFolders]);
 
     return {
         smartFolders,

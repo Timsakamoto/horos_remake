@@ -1,11 +1,15 @@
-import React, { useState, useMemo } from 'react';
-import { Patient, SearchFilters, SortConfig, emptyFilters } from '../types';
+import { useMemo } from 'react';
+import { Patient, SearchFilters, SortConfig } from '../types';
 
-export const useDatabaseSearch = (patients: Patient[]) => {
-    const [searchFilters, setSearchFilters] = useState<SearchFilters>(emptyFilters);
-    const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'ImportDateTime', direction: 'desc' });
-    const [availableModalities, setAvailableModalities] = useState<string[]>([]);
-
+export const useDatabaseSearch = (
+    patients: Patient[],
+    searchFilters: SearchFilters,
+    setSearchFilters: (f: SearchFilters) => void,
+    sortConfig: SortConfig,
+    setSortConfig: (c: SortConfig) => void,
+    availableModalities: string[],
+    setAvailableModalities: (m: string[]) => void
+) => {
     const filteredPatients = useMemo(() => {
         const {
             patientName,

@@ -1,9 +1,22 @@
-import { imageLoader, metaData } from '@cornerstonejs/core';
+import { imageLoader, metaData, cache } from '@cornerstonejs/core';
 import cornerstoneDICOMImageLoader from '@cornerstonejs/dicom-image-loader';
 import dicomParser from 'dicom-parser';
 
 const metadataCache = new Map<string, any>();
-const seriesForCache = new Map<string, string>(); // Global registry for FrameOfReferenceUIDs
+
+export function clearMetadataCache(seriesInstanceUID?: string) {
+    if (seriesInstanceUID) {
+        // Clear specific series if provided
+        for (const [key, value] of metadataCache.entries()) {
+            if (value?.generalSeriesModule?.seriesInstanceUID === seriesInstanceUID) {
+                metadataCache.delete(key);
+            }
+        }
+    } else {
+        metadataCache.clear();
+    }
+    console.log(`[electronLoader] Metadata cache cleared ${seriesInstanceUID ? `for series ${seriesInstanceUID}` : 'completely'}`);
+}
 
 /**
  * Normalizes imageId for metadata lookups (strips query parameters like ?forVolume=true)
@@ -13,8 +26,21 @@ function normalizePath(p: string): string {
     if (!p) return '';
     let filePath = p;
     try { filePath = decodeURIComponent(filePath); } catch (e) { }
-    // Replace all backslashes with forward slashes for cross-platform key consistency
+
+    // Replace all backslashes with forward slashes
     filePath = filePath.replace(/\\/g, '/');
+
+    // Remove double slashes (except at start of UNC paths if any)
+    filePath = filePath.replace(/\/+/g, '/');
+
+    // Detect if it's a Windows path (e.g. C:/...)
+    const isWindows = /^[a-zA-Z]:/.test(filePath);
+
+    // On non-Windows (macOS/Linux), ensure it starts with a single /
+    if (!isWindows && !filePath.startsWith('/')) {
+        filePath = '/' + filePath;
+    }
+
     if (!filePath.startsWith('/') && !filePath.includes(':')) {
         const managedDir = localStorage.getItem('peregrine_database_path');
         if (managedDir) {
@@ -34,9 +60,9 @@ function getCacheKey(imageId: string): string {
     if (!imageId) return '';
     let urlParts = imageId.split('?');
     let schemeAndPath = urlParts[0];
-    if (schemeAndPath.startsWith('electronfile:')) {
-        let rawPath = schemeAndPath.substring('electronfile:'.length);
-        return `electronfile:${normalizePath(rawPath)}`;
+    if (schemeAndPath.startsWith('electronfile://')) {
+        let rawPath = schemeAndPath.substring('electronfile://'.length);
+        return `electronfile://${normalizePath(rawPath)}`;
     }
     return schemeAndPath;
 }
@@ -74,6 +100,11 @@ export function registerElectronImageLoader() {
         decodeConfig: { convertFloatPixelDataToInt: false },
     });
     imageLoader.registerImageLoader('electronfile', loadElectronImage);
+
+    // Performance Tuning: Set cache to 1GB for smooth handling of large series
+    // On professional workstations, this should ideally be 50-70% of available RAM.
+    cache.setMaxCacheSize(1024 * 1024 * 1024);
+
     // Protect from multiple provider registrations
     try {
         // @ts-ignore
@@ -90,7 +121,7 @@ function electronMetadataProvider(type: string, ...queries: any[]) {
     const query = queries[0];
     const imageId = (typeof query === 'string') ? query : (query?.imageId || '');
 
-    if (!imageId || !imageId.startsWith('electronfile:')) return;
+    if (!imageId || !imageId.startsWith('electronfile://')) return;
 
     // Strict lookup: Access the map directly
     const metadata = metadataCache.get(getCacheKey(imageId));
@@ -121,10 +152,10 @@ function electronMetadataProvider(type: string, ...queries: any[]) {
         const mod = metadata.imagePixelModule || {};
         return {
             ...mod,
-            pixelRepresentation: 1,
-            bitsAllocated: 32,
-            bitsStored: 32,
-            highBit: 31,
+            pixelRepresentation: mod.pixelRepresentation ?? 1,
+            bitsAllocated: mod.bitsAllocated ?? 32,
+            bitsStored: mod.bitsStored ?? 32,
+            highBit: mod.highBit ?? 31,
             samplesPerPixel: 1,
             photometricInterpretation: mod.photometricInterpretation || 'MONOCHROME2',
             rows: mod.rows,
@@ -180,250 +211,209 @@ class ConcurrencyLimiter {
 }
 const loadLimiter = new ConcurrencyLimiter();
 
-// Global counter for debugging
-let totalLoadedImages = 0;
+
+const COMPRESSED_TS = [
+    '1.2.840.10008.1.2.4.50', // JPEG Baseline
+    '1.2.840.10008.1.2.4.51', // JPEG Extended
+    '1.2.840.10008.1.2.4.57', // JPEG Lossless P14
+    '1.2.840.10008.1.2.4.70', // JPEG Lossless P14 SV1
+    '1.2.840.10008.1.2.4.80', // JPEG-LS Lossless
+    '1.2.840.10008.1.2.4.81', // JPEG-LS Near-Lossless
+    '1.2.840.10008.1.2.4.90', // JPEG 2000 Lossless
+    '1.2.840.10008.1.2.4.91', // JPEG 2000
+    '1.2.840.10008.1.2.5',    // RLE Lossless
+];
+
+function isCompressedTransferSyntax(ts: string): boolean {
+    if (!ts) return false;
+    return COMPRESSED_TS.includes(ts);
+}
 
 export async function prefetchMetadata(imageIds: string[]) {
-    console.log(`Loader: prefetchMetadata requested for ${imageIds.length} images`);
+    if (imageIds.length === 0) return;
 
-    let moduleFrameOfReferenceUID: string | null = null;
-
-    // Extract seriesUid from first imageId if possible to maintain global consistency
+    // Extract seriesUid from first imageId
     const firstImageId = imageIds[0];
-    const seriesUidMatch = firstImageId?.match(/seriesUid=([^&]+)/);
-    const seriesUid = seriesUidMatch ? seriesUidMatch[1] : 'default';
-
-    if (seriesForCache.has(seriesUid)) {
-        moduleFrameOfReferenceUID = seriesForCache.get(seriesUid)!;
+    let seriesUid: string | null = null;
+    if (firstImageId && firstImageId.includes('?')) {
+        const query = firstImageId.split('?')[1];
+        const params = new URLSearchParams(query);
+        seriesUid = params.get('seriesUid');
     }
 
-    let moduleImageOrientationPatient: number[] | null = null;
-    let modulePixelSpacing: number[] | null = null;
+    if (!seriesUid) {
+        const filePath = normalizePath(firstImageId.replace('electronfile://', '').split('?')[0]);
+        try {
+            // @ts-ignore
+            const result = await window.electron.db.get(`
+                SELECT s.seriesInstanceUID FROM instances i
+                JOIN series s ON i.seriesId = s.id
+                WHERE i.filePath LIKE ? OR i.filePath = ?
+            `, [`%${filePath.split('/').pop()}`, filePath]);
 
-    const CHUNK_SIZE = 10; // Increase chunk size for better spacing detection
-    let calculatedGeometrySpacing: number | null = null;
-    let zPositions: number[] = [];
-
-    for (let i = 0; i < imageIds.length; i += CHUNK_SIZE) {
-        const chunk = imageIds.slice(i, i + CHUNK_SIZE);
-        await Promise.all(chunk.map(async (imageId, chunkIndex) => {
-            const cacheKey = getCacheKey(imageId);
-
-            // --- ★ Aggressive FoR & Consistency Check (Even on Cache Hit) ---
-            if (metadataCache.has(cacheKey)) {
-                const m = metadataCache.get(cacheKey);
-
-                // --- ★ FORCE Metadata Consistency (Cache Upgrade) ---
-                // If this image was loaded in 2D first, it might be 16-bit.
-                // We MUST upgrade it to 32-bit float if it's a modality we patch,
-                // otherwise Cornerstone will reject it from the 3D volume.
-                const modality = m.originalAttributes?.modality;
-                const canPatch = modality && ['CT', 'MR', 'PT', 'NM'].includes(modality);
-
-                if (canPatch && m.imagePixelModule.bitsAllocated !== 32) {
-                    m.imagePixelModule.bitsAllocated = 32;
-                    m.imagePixelModule.bitsStored = 32;
-                    m.imagePixelModule.highBit = 31;
-                    m.imagePixelModule.pixelRepresentation = 1;
-                    m.imagePixelModule.rescaleIntercept = 0;
-                    m.imagePixelModule.rescaleSlope = 1;
-                    // @ts-ignore
-                    m.imagePixelModule.dataType = 'float32';
-                }
-
-                // Force shared Frame of Reference to prevent Cornerstone rejection
-                if (moduleFrameOfReferenceUID) {
-                    m.imagePlaneModule.frameOfReferenceUID = moduleFrameOfReferenceUID;
-                } else {
-                    moduleFrameOfReferenceUID = m.imagePlaneModule.frameOfReferenceUID;
-                }
-
-                // --- ★ FORCE Orientation & Spacing Consistency (Rejection Prevention) ---
-                if (moduleImageOrientationPatient) {
-                    m.imagePlaneModule.imageOrientationPatient = moduleImageOrientationPatient;
-                    m.imagePlaneModule.rowCosines = moduleImageOrientationPatient.slice(0, 3);
-                    m.imagePlaneModule.columnCosines = moduleImageOrientationPatient.slice(3, 6);
-                } else {
-                    moduleImageOrientationPatient = m.imagePlaneModule.imageOrientationPatient;
-                }
-
-                if (modulePixelSpacing) {
-                    m.imagePlaneModule.pixelSpacing = modulePixelSpacing;
-                    m.imagePlaneModule.rowPixelSpacing = modulePixelSpacing[0];
-                    m.imagePlaneModule.columnPixelSpacing = modulePixelSpacing[1];
-                } else {
-                    modulePixelSpacing = m.imagePlaneModule.pixelSpacing;
-                }
-
-                const p = m.imagePlaneModule.imagePositionPatient;
-                if (p && p.length === 3) zPositions.push(p[2]);
-                return;
+            if (result) {
+                seriesUid = result.seriesInstanceUID;
             }
+        } catch (e) {
+            console.error('[Loader] DB lookup for seriesUid failed:', e);
+        }
+    }
 
-            try {
-                const filePath = normalizePath(imageId.replace('electronfile:', '').split('?')[0]);
-                console.log(`[Loader] Prefetching: ${filePath} (from ${imageId})`);
+    if (!seriesUid) {
+        console.warn('[Loader] No seriesUid found for prefetch');
+        return;
+    }
 
-                // @ts-ignore
-                const buffer = await window.electron.readFile(filePath, { length: 512 * 1024 });
-                if (!buffer) return;
+    console.log(`[Loader] Fast Prefetching metadata for series ${seriesUid} (${imageIds.length} images)...`);
+    const startPrefetch = Date.now();
 
-                const uint8Array = new Uint8Array(buffer);
-                const dataSet = dicomParser.parseDicom(uint8Array, { untilTag: 'x7fe00010' });
+    try {
+        // Fetch all instance rows for this series
+        // @ts-ignore
+        const rows = await window.electron.db.query(`
+            SELECT 
+                sopInstanceUID, filePath, rows, columns, pixelSpacing, sliceLocation,
+                imagePositionPatient, imageOrientationPatient, windowCenter, windowWidth,
+                rescaleIntercept, rescaleSlope, bitsAllocated, bitsStored, highBit, pixelRepresentation,
+                transferSyntaxUID, modality, photometricInterpretation
+            FROM instances i
+            JOIN series s ON i.seriesId = s.id
+            WHERE s.seriesInstanceUID = ?
+        `, [seriesUid]);
 
-                const getMultiNumber = (tag: string) => (dataSet.string(tag) || '').split(/\\+/).map(s => parseFloat(s)).filter(n => !isNaN(n));
-                const getSingleNumber = (tag: string, def?: number): number | undefined => {
-                    const val = dataSet.string(tag);
-                    if (!val) return def;
-                    const n = parseFloat(val.split(/\\+/)[0]);
-                    return isNaN(n) ? def : n;
-                };
+        console.log(`[Loader] DB query for ${seriesUid} returned ${rows?.length || 0} rows.`);
 
-                const intercept = getSingleNumber('x00281052', 0);
-                const slope = getSingleNumber('x00281053', 1);
-                const rows = dataSet.uint16('x00280010');
-                const columns = dataSet.uint16('x00280011');
+        if (!rows || rows.length === 0) {
+            console.warn(`[Loader] No database records found for series ${seriesUid}`);
+            return;
+        }
 
-                // --- ★ UNIVERSAL 32-BIT CHECK (Consistency FIX) ---
-                const modality = dataSet.string('x00080060');
-                const canPatch = modality && ['CT', 'MR', 'PT', 'NM'].includes(modality);
-                // We ALWAYS treat these as 32-bit floats to prevent 2D/3D cache poisoning!
-                const willPatch = !dataSet.string('x00280004')?.includes('RGB') && (canPatch || intercept !== 0 || slope !== 1);
+        // Map rows into the metadataCache
+        for (const row of rows) {
+            // Normalize row.filePath for comparison
+            const normRowPath = (row.filePath || '').replace(/\\/g, '/');
 
-                const ts = dataSet.string('x00020010') || '1.2.840.10008.1.2.1';
-                const uncompressedTS = ['1.2.840.10008.1.2', '1.2.840.10008.1.2.1', '1.2.840.10008.1.2.2'];
-                const isCompressed = !uncompressedTS.includes(ts);
+            // Find the imageId that matches this SOPInstanceUID or filePath
+            // In our system, imageId usually ends with the filePath.
+            const matchingImageId = imageIds.find(id => {
+                const normId = id.replace(/\\/g, '/');
+                return normId.includes(normRowPath) || normId.includes(row.sopInstanceUID);
+            });
+            if (!matchingImageId) continue;
 
-                const imagePixelModule = {
-                    samplesPerPixel: dataSet.uint16('x00280002') || 1,
-                    photometricInterpretation: dataSet.string('x00280004') || 'MONOCHROME2',
-                    rows, columns,
-                    bitsAllocated: willPatch ? 32 : (dataSet.uint16('x00280100') || 16),
-                    bitsStored: willPatch ? 32 : (dataSet.uint16('x00280101') || 16),
-                    highBit: willPatch ? 31 : (dataSet.uint16('x00280102') || 15),
-                    pixelRepresentation: willPatch ? 1 : (dataSet.uint16('x00280103') || 0),
-                    rescaleIntercept: willPatch ? 0 : intercept,
-                    rescaleSlope: willPatch ? 1 : slope,
+            const cacheKey = getCacheKey(matchingImageId);
+
+            const ipp = row.imagePositionPatient ? row.imagePositionPatient.split('\\').map(Number) : [0, 0, row.sliceLocation || 0];
+            const iop = row.imageOrientationPatient ? row.imageOrientationPatient.split('\\').map(Number) : [1, 0, 0, 0, 1, 0];
+            const spacing = row.pixelSpacing ? row.pixelSpacing.split('\\').map(Number) : [1, 1];
+
+            const willPatch = ['CT', 'MR', 'PT', 'NM'].includes(row.modality);
+
+            metadataCache.set(cacheKey, {
+                imagePixelModule: {
+                    samplesPerPixel: 1, // Default, update if needed
+                    photometricInterpretation: row.photometricInterpretation || 'MONOCHROME2',
+                    rows: row.rows,
+                    columns: row.columns,
+                    bitsAllocated: willPatch ? 32 : (row.bitsAllocated || 16),
+                    bitsStored: willPatch ? 32 : (row.bitsStored || 16),
+                    highBit: willPatch ? 31 : (row.highBit || 15),
+                    pixelRepresentation: willPatch ? 1 : (row.pixelRepresentation || 0),
+                    rescaleIntercept: willPatch ? 0 : (row.rescaleIntercept || 0),
+                    rescaleSlope: willPatch ? 1 : (row.rescaleSlope || 1),
                     // @ts-ignore
                     dataType: willPatch ? 'float32' : undefined,
-                };
+                },
+                imagePlaneModule: {
+                    rows: row.rows,
+                    columns: row.columns,
+                    imagePositionPatient: round(ipp),
+                    imageOrientationPatient: round(iop),
+                    rowCosines: round(iop.slice(0, 3)),
+                    columnCosines: round(iop.slice(3, 6)),
+                    pixelSpacing: round(spacing),
+                    rowPixelSpacing: round(spacing[0]),
+                    columnPixelSpacing: round(spacing[1]),
+                    sliceThickness: 1.0, // We'll improve this below
+                    sliceLocation: round(row.sliceLocation || ipp[2]),
+                    frameOfReferenceUID: row.frameOfReferenceUID || '1.2.3',
+                },
+                voiLutModule: {
+                    windowCenter: row.windowCenter,
+                    windowWidth: row.windowWidth,
+                },
+                modalityLutModule: {
+                    rescaleIntercept: willPatch ? 0 : (row.rescaleIntercept || 0),
+                    rescaleSlope: willPatch ? 1 : (row.rescaleSlope || 1),
+                },
+                originalAttributes: {
+                    rescaleIntercept: row.rescaleIntercept,
+                    rescaleSlope: row.rescaleSlope,
+                    bitsStored: row.bitsStored,
+                    bitsAllocated: row.bitsAllocated,
+                    pixelRepresentation: row.pixelRepresentation,
+                    transferSyntax: row.transferSyntaxUID,
+                    modality: row.modality,
+                    isCompressed: isCompressedTransferSyntax(row.transferSyntaxUID),
+                },
+                generalSeriesModule: {
+                    modality: row.modality,
+                    seriesInstanceUID: seriesUid // Tag for selective clearing
+                },
+            });
+        }
 
-                let pos = getMultiNumber('x00200032');
-                if (pos.length === 3) zPositions.push(pos[2]);
-
-                if (pos.length !== 3) pos = [0, 0, i + chunkIndex];
-
-                let orient = getMultiNumber('x00200037');
-                if (orient.length !== 6) orient = [1, 0, 0, 0, 1, 0];
-                let spacing = getMultiNumber('x00280030');
-
-                // ★ FORCE EVERYTHING Consistency
-                let currentFoR = dataSet.string('x00200052') || '1.2.3';
-                if (!moduleFrameOfReferenceUID) {
-                    moduleFrameOfReferenceUID = currentFoR;
-                    seriesForCache.set(seriesUid, moduleFrameOfReferenceUID);
-                    console.log(`[Loader] Captured Master FrameOfReferenceUID for ${seriesUid}: ${moduleFrameOfReferenceUID}`);
-                } else {
-                    currentFoR = moduleFrameOfReferenceUID;
-                }
-
-                if (!moduleImageOrientationPatient) {
-                    moduleImageOrientationPatient = orient;
-                    console.log(`[Loader] Captured Master Orientation: ${orient}`);
-                } else {
-                    orient = moduleImageOrientationPatient;
-                }
-
-                if (!modulePixelSpacing) {
-                    modulePixelSpacing = spacing;
-                    console.log(`[Loader] Captured Master Spacing: ${spacing}`);
-                } else {
-                    spacing = modulePixelSpacing;
-                }
-
-                metadataCache.set(cacheKey, {
-                    imagePixelModule,
-                    imagePlaneModule: {
-                        rows, columns,
-                        imagePositionPatient: round(pos),
-                        imageOrientationPatient: round(orient),
-                        rowCosines: round(orient.slice(0, 3)),
-                        columnCosines: round(orient.slice(3, 6)),
-                        pixelSpacing: round(spacing),
-                        rowPixelSpacing: round(spacing[0]),
-                        columnPixelSpacing: round(spacing[1]),
-                        sliceThickness: getSingleNumber('x00180088', getSingleNumber('x00180050', 1.0)),
-                        sliceLocation: round(pos[2]),
-                        frameOfReferenceUID: currentFoR,
-                    },
-                    voiLutModule: {
-                        windowCenter: getSingleNumber('x00281050'),
-                        windowWidth: getSingleNumber('x00281051'),
-                    },
-                    modalityLutModule: {
-                        rescaleIntercept: willPatch ? 0 : intercept,
-                        rescaleSlope: willPatch ? 1 : slope,
-                    },
-                    originalAttributes: {
-                        rescaleIntercept: intercept,
-                        rescaleSlope: slope,
-                        bitsStored: dataSet.uint16('x00280101') || 16,
-                        bitsAllocated: dataSet.uint16('x00280100') || 16,
-                        pixelRepresentation: dataSet.uint16('x00280103') || 0,
-                        transferSyntax: ts,
-                        isCompressed,
-                        modality,
-                    },
-                    generalSeriesModule: { modality },
-                });
-            } catch (e: any) {
-                console.error(`Loader: Prefetch Error for ${imageId}. Path=${(e as any)?.path || 'unknown'}. Msg=${e?.message || e}`);
-            }
-        }));
-
-        // Calculate Spacing from collected Z positions
-        if (calculatedGeometrySpacing === null && zPositions.length > 1) {
-            zPositions.sort((a, b) => a - b);
-            // Find median spacing? Or just first diff
-            for (let k = 0; k < zPositions.length - 1; k++) {
-                const diff = Math.abs(zPositions[k + 1] - zPositions[k]);
+        // Calculate slice thickness if possible
+        const zPositions = rows.map((r: any) => r.sliceLocation).filter((z: any) => z !== null).sort((a: number, b: number) => a - b);
+        if (zPositions.length > 1) {
+            let thickness = 1.0;
+            for (let i = 0; i < zPositions.length - 1; i++) {
+                const diff = Math.abs(zPositions[i + 1] - zPositions[i]);
                 if (diff > 0.01) {
-                    calculatedGeometrySpacing = diff;
-                    console.log(`[Loader] Calculated Geometry Spacing=${diff}`);
+                    thickness = diff;
                     break;
                 }
             }
-        }
-
-        if (calculatedGeometrySpacing !== null) {
-            const finalSpacing = Math.max(calculatedGeometrySpacing, 0.1);
-            chunk.forEach(id => {
-                const m = metadataCache.get(getCacheKey(id));
-                if (m) m.imagePlaneModule.sliceThickness = finalSpacing;
+            // Apply to all in cache
+            rows.forEach((r: any) => {
+                const imgId = imageIds.find(id => {
+                    const normId = id.replace(/\\/g, '/');
+                    const normRowPath = (r.filePath || '').replace(/\\/g, '/');
+                    return normId.includes(normRowPath);
+                });
+                if (imgId) {
+                    const m = metadataCache.get(getCacheKey(imgId));
+                    if (m) m.imagePlaneModule.sliceThickness = thickness;
+                }
             });
         }
+
+        console.log(`[Loader] Fast Prefetch complete for ${rows.length} images in ${Date.now() - startPrefetch}ms.`);
+
+    } catch (err) {
+        console.error('[Loader] Fast Prefetch failed:', err);
+        // Fallback or bubble up? For now, we logging.
     }
 }
 
 export function loadElectronImage(imageId: string) {
-    console.log(`[Loader] loadElectronImage: ${imageId}`);
     return {
         promise: (async () => {
-            // ...
-            totalLoadedImages++;
-            if (totalLoadedImages % 10 === 0) {
-                console.log(`[Loader] Progress: ${totalLoadedImages} images loaded.`);
-            }
-            const filePath = normalizePath(imageId.replace('electronfile:', '').split('?')[0]);
+            const filePath = normalizePath(imageId.replace('electronfile://', '').split('?')[0]);
             const queryParams = new URLSearchParams(imageId.split('?')[1] || '');
 
             const frameIndex = parseInt(queryParams.get('frame') || '0');
             if (isNaN(frameIndex)) console.error(`Loader: FrameIndex is NaN for ${imageId}`);
 
             const cacheKey = getCacheKey(imageId);
+            // Don't just check has(), but also check if photometricInterpretation is in there 
+            // from old versions. Actually, just prefetch if we haven't prefetched this image's series.
             if (!metadataCache.has(cacheKey)) await prefetchMetadata([imageId]);
             const meta = metadataCache.get(cacheKey);
-            if (!meta) throw new Error(`[Loader] Metadata missing for ${imageId}`);
+            if (!meta) {
+                console.error(`[Loader] Metadata missing for ${imageId}. CacheKeys count: ${metadataCache.size}`);
+                throw new Error(`[Loader] Metadata missing for ${imageId}`);
+            }
 
             const orig = meta.originalAttributes || {}; // Safeguard
             const buffer = await loadLimiter.run(() => window.electron.readFile(filePath));
@@ -439,31 +429,22 @@ export function loadElectronImage(imageId: string) {
             // Fix 1: Guard against undefined property
             const isCompressed = orig?.isCompressed || false;
 
+
             if (isCompressed) {
                 // ... existing decompression code ...
                 const blob = new Blob([uint8Array], { type: 'application/dicom' });
                 const blobUrl = URL.createObjectURL(blob);
                 try {
-                    const cornerstoneImage = await imageLoader.loadImage(`wadouri:${blobUrl}`);
+                    const cornerstoneImage = await imageLoader.loadImage(`wadouri:${blobUrl}${frameIndex > 0 ? '?frame=' + frameIndex : ''}`);
                     const decodedPixels = cornerstoneImage.getPixelData();
                     if (!decodedPixels) throw new Error("Decoded pixel data is empty");
                     for (let i = 0; i < Math.min(numPixels, decodedPixels.length); i++) {
                         float32Data[i] = decodedPixels[i];
                     }
-                } catch (decodeErr) {
-                    console.error(`Loader: DECODE FAILED for ${orig.transferSyntax}:`, decodeErr);
-                    float32Data.fill(-1000);
                 } finally {
                     URL.revokeObjectURL(blobUrl);
                 }
-                console.log(`[Loader] Decoded compressed frame for ${filePath}`);
 
-                // [DIAGNOSTIC] Compressed Data Check
-                if (frameIndex === 0) {
-                    const val = float32Data[0];
-                    console.log(`[DIAGNOSTIC] COMPRESSED ${imageId}: Intercept=${orig.rescaleIntercept}, Slope=${orig.rescaleSlope}, TS=${orig.transferSyntax}`);
-                    console.log(`[DIAGNOSTIC] Pixel[0] (Pre-Rescale): Raw=${val} (Hex=${val?.toString(16)})`);
-                }
 
                 // ★ CRITICAL FIX: Apply Rescale Slope/Intercept for Compressed Data too
                 // Cornerstone wadors/wadouri often returns raw pixel data, not Modality LUT transformed data.
@@ -498,28 +479,18 @@ export function loadElectronImage(imageId: string) {
                 const finalOffset = uint8Array.byteOffset + frameOffset;
                 let rawData;
 
-                // 1. 生データの読み込み (型を自動選択)
-                // bitsAllocatedは通常8, 12, 16
                 if (bitsAllocated <= 8) {
                     rawData = new Uint8Array(ab, finalOffset, numPixels);
                 } else if (pixelRepresentation === 1) {
-                    // Signed
                     if (finalOffset % 2 === 0) rawData = new Int16Array(ab, finalOffset, numPixels);
                     else rawData = new Int16Array(uint8Array.slice(frameOffset, frameOffset + frameSize).buffer);
                 } else {
-                    // Unsigned (CR/Philipsなど)
                     if (finalOffset % 2 === 0) {
                         const remainingBytes = ab.byteLength - finalOffset;
                         const safeLen = Math.min(numPixels, Math.floor(remainingBytes / 2));
                         rawData = new Uint16Array(ab, finalOffset, safeLen);
                     }
                     else rawData = new Uint16Array(uint8Array.slice(frameOffset, frameOffset + frameSize).buffer);
-                }
-
-                // [DIAGNOSTIC] Metadata Check
-                if (frameIndex === 0) {
-                    console.log(`[DIAGNOSTIC] ${imageId}: Intercept=${rescaleIntercept}, Slope=${rescaleSlope}, Rep=${pixelRepresentation}, Bits=${bitsStored}/${bitsAllocated}`);
-                    console.log(`[DIAGNOSTIC] Data Offset=${pixelDataAttr.dataOffset}, BufferSize=${uint8Array.byteLength}, FrameSize=${frameSize}`);
                 }
 
                 // 2. マスク処理の自動化 (Peregrine logic)
@@ -531,28 +502,34 @@ export function loadElectronImage(imageId: string) {
                 // 3. 変換ループ
                 for (let i = 0; i < numPixels; i++) {
                     let val = rawData[i];
-                    // Handle short reads (undefined becomes 0)
-                    if (val === undefined) val = 0; // Explicit zeroing for clarity
-
-                    // [DIAGNOSTIC] Sample first 5 pixels
-                    if (i < 5 && frameIndex === 0) {
-                        console.log(`[DIAGNOSTIC] Pixel[${i}]: Raw=${val} (Hex=${val?.toString(16)}), Masked=${pixelRepresentation === 0 ? (val & mask) : val}, Out=${(val * rescaleSlope) + rescaleIntercept}`);
-                    }
+                    if (val === undefined) val = 0;
 
                     // Unsignedならマスク適用
                     if (pixelRepresentation === 0) {
                         val = val & mask;
                     }
+
                     // スロープ・切片適用 (物理量へ変換)
                     float32Data[i] = (val * rescaleSlope) + rescaleIntercept;
                 }
             }
 
             // 4. データ範囲の計算 & VOIの自動設定
-            // 簡易的に東芝などは -2048 固定でもOKだが、一応スキャンしても良い。
-            // ここではユーザー指示通り固定値を優先。
-            let min = -2048;
-            let max = 32767;
+            let dataMin = Infinity;
+            let dataMax = -Infinity;
+            // PERFORMANCE: Sample pixels to find range if data is large, or just scan all since it's Float32
+            for (let i = 0; i < float32Data.length; i++) {
+                const val = float32Data[i];
+                if (val < dataMin) dataMin = val;
+                if (val > dataMax) dataMax = val;
+            }
+
+            // Fallback for empty/constant images
+            if (dataMin === Infinity) { dataMin = 0; dataMax = 1; }
+            if (dataMin === dataMax) dataMax = dataMin + 1;
+
+            const min = dataMin;
+            const max = dataMax;
 
             // --- ★ Cornerstoneへの返却 (ここが最重要) ---
             const result = {
@@ -565,7 +542,7 @@ export function loadElectronImage(imageId: string) {
                 columns: meta.imagePixelModule.columns,
                 height: meta.imagePixelModule.rows,
                 width: meta.imagePixelModule.columns,
-                color: false,
+                color: (meta.imagePixelModule.samplesPerPixel || 1) > 1,
 
                 // Spacing & Geometry (Critical for Volume: USE CACHED VALUES)
                 columnPixelSpacing: meta.imagePlaneModule.columnPixelSpacing,
@@ -587,8 +564,12 @@ export function loadElectronImage(imageId: string) {
                 intercept: 0,
 
                 // Display & render properties
-                windowCenter: meta.voiLutModule.windowCenter,
-                windowWidth: meta.voiLutModule.windowWidth,
+                windowCenter: (meta.voiLutModule.windowCenter !== undefined && meta.voiLutModule.windowCenter !== 0)
+                    ? meta.voiLutModule.windowCenter
+                    : (dataMin + dataMax) / 2,
+                windowWidth: (meta.voiLutModule.windowWidth !== undefined && meta.voiLutModule.windowWidth !== 0)
+                    ? meta.voiLutModule.windowWidth
+                    : (dataMax - dataMin),
                 render: undefined,
                 getCanvas: undefined,
                 numComps: 1,
@@ -606,17 +587,6 @@ export function loadElectronImage(imageId: string) {
                 dataType: 'float32',
             };
 
-            if (totalLoadedImages < 5 || totalLoadedImages % 100 === 0) {
-                console.log(`[MAP-CHECK] ${imageId} maps to Z=${meta.imagePlaneModule.imagePositionPatient[2]}`);
-            }
-
-            let dataMin = Infinity, dataMax = -Infinity;
-            for (let i = 0; i < float32Data.length; i += 100) {
-                if (float32Data[i] < dataMin) dataMin = float32Data[i];
-                if (float32Data[i] > dataMax) dataMax = float32Data[i];
-            }
-
-            console.log(`[HANDSHAKE] ${imageId}: Returning ${float32Data.length} pixels, Min=${dataMin}, Max=${dataMax}, Window=${meta.voiLutModule.windowWidth}/${meta.voiLutModule.windowCenter}`);
             return result;
         })()
     };

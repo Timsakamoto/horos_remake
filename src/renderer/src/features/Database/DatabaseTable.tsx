@@ -6,7 +6,7 @@ import { usePACS } from '../PACS/PACSProvider'; // Import types
 interface DatabaseTableProps {
     onPatientSelect: (id: string) => void;
     onStudySelect: (uid: string | null) => void;
-    onSeriesSelect: (uid: string | null) => void;
+    onSeriesSelect: (uid: string | null, studyUid?: string | null) => void;
     selectedPatientId: string | null;
     selectedStudyUid: string | null;
     selectedSeriesUid: string | null;
@@ -30,7 +30,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
     };
 
     const {
-        patients, db, requestDelete, lastDeletionTime, searchFilters, setSearchFilters,
+        patients, requestDelete, lastDeletionTime, searchFilters, setSearchFilters,
         availableModalities, sortConfig, setSortConfig, checkedItems, toggleSelection
     } = useDatabase();
     const [expandedPatients, setExpandedPatients] = useState<Set<string>>(new Set());
@@ -60,59 +60,87 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
         );
     };
 
+    const isPatientAnonymous = (patient: any) => {
+        const pID = (patient.patientID || '').toLowerCase();
+        const pName = (patient.patientName || '').toLowerCase();
+        return !pID ||
+            pID.includes('anonymous') ||
+            pID.includes('annonymous') ||
+            pID === '0000000' ||
+            pID.includes('unknown') ||
+            pID.includes('blinded') ||
+            pName.includes('anonymous') ||
+            pName.includes('annonymous') ||
+            pName.includes('unknown') ||
+            pName.includes('blinded');
+    };
+
     const fetchStudiesForPatient = async (patientId: string) => {
-        if (!db) return;
-        const patient = patients.find(p => p.id === patientId);
-        if (!patient) return;
+        const patient = patients.find(p => String(p.id) === String(patientId));
+        if (!patient) {
+            console.warn(`[DatabaseTable] fetchStudiesForPatient: Patient not found for ID: ${patientId}`);
+            return;
+        }
 
-        if (patient._isStudy) {
-            const seriesDocs = await db.series.find({ selector: { studyInstanceUID: patientId } }).exec();
-            const seriesWithCounts = await Promise.all(seriesDocs.map(async (s) => {
-                const count = await db.images.count({ selector: { seriesInstanceUID: s.seriesInstanceUID } }).exec();
-                return { ...s.toJSON(), imageCount: count };
-            }));
-            setStudiesMap(prev => ({ ...prev, [patientId]: seriesWithCounts }));
-        } else {
-            const studies = await db.studies.find({
-                selector: { patientId },
-                sort: [{ ImportDateTime: 'desc' }]
-            }).exec();
-            // Fallback institutionName from patient if missing in study
-            const patientDoc = await db.patients.findOne(patientId).exec();
-            const mappedStudies = await Promise.all(studies.map(async (s) => {
-                const data = s.toJSON();
-                // If study instance count is 0, try to sum series counts
-                let studyImages = data.numberOfStudyRelatedInstances || 0;
-                if (studyImages === 0) {
-                    const sers = await db.series.find({ selector: { studyInstanceUID: data.studyInstanceUID } }).exec();
-                    studyImages = sers.reduce((acc, ser: any) => acc + (ser.numberOfSeriesRelatedInstances || 0), 0);
-                }
+        console.log(`[DatabaseTable] fetchStudiesForPatient: Start fetching studies for ${patient.patientName} (ID: ${patientId}, isStudyMode: ${!!patient._isStudy})`);
 
-                return {
-                    ...data,
-                    numberOfStudyRelatedInstances: studyImages,
-                    institutionName: data.institutionName || patientDoc?.institutionName || ''
-                };
-            }));
-            // Filter out empty studies
-            setStudiesMap(prev => ({ ...prev, [patientId]: mappedStudies.filter(s => s.numberOfStudyRelatedInstances > 0) }));
+        try {
+            if (patient._isStudy) {
+                // Study Mode: patientId is studyInstanceUID
+                console.log(`[DatabaseTable] Querying series for Study UID: ${patientId}`);
+                const seriesDocs = await (window as any).electron.db.query(
+                    'SELECT * FROM series WHERE studyId = (SELECT id FROM studies WHERE studyInstanceUID = ?) ORDER BY seriesNumber ASC',
+                    [patientId]
+                );
+
+                const seriesWithCounts = seriesDocs.map((s: any) => ({
+                    ...s,
+                    imageCount: s.numberOfSeriesRelatedInstances || 0
+                }));
+                console.log(`[DatabaseTable] Series found: ${seriesWithCounts.length}`);
+                setStudiesMap(prev => ({ ...prev, [patientId]: seriesWithCounts }));
+            } else {
+                // Patient Mode: fetch studies for this patient
+                console.log(`[DatabaseTable] Querying studies for Patient DB ID: ${patientId}`);
+                const studies = await (window as any).electron.db.query(
+                    'SELECT s.* FROM studies s WHERE s.patientId = ? ORDER BY s.studyDate DESC',
+                    [patientId]
+                );
+
+                const mappedStudies = studies.map((s: any) => ({
+                    ...s,
+                    institutionName: s.institutionName || '',
+                    imageCount: s.numberOfStudyRelatedInstances || 0
+                }));
+
+                console.log(`[DatabaseTable] Studies found: ${mappedStudies.length}`);
+                setStudiesMap(prev => ({ ...prev, [patientId]: mappedStudies }));
+            }
+        } catch (err) {
+            console.error('[DatabaseTable] fetchStudiesForPatient failed:', err);
         }
     };
 
     const fetchSeriesForStudy = async (studyUid: string) => {
-        if (!db) return;
-        const seriesDocs = await db.series.find({ selector: { studyInstanceUID: studyUid } }).exec();
-        const seriesWithCounts = await Promise.all(seriesDocs.map(async (s) => {
-            const count = await db.images.count({ selector: { seriesInstanceUID: s.seriesInstanceUID } }).exec();
-            return { ...s.toJSON(), imageCount: count };
-        }));
-        // Filter out empty series (0 images)
-        setSeriesMap(prev => ({ ...prev, [studyUid]: seriesWithCounts.filter(s => s.imageCount > 0) }));
+        try {
+            const seriesDocs = await (window as any).electron.db.query(
+                'SELECT * FROM series WHERE studyId = (SELECT id FROM studies WHERE studyInstanceUID = ?) ORDER BY seriesNumber ASC',
+                [studyUid]
+            );
+
+            const seriesWithCounts = seriesDocs.map((s: any) => ({
+                ...s,
+                imageCount: s.numberOfSeriesRelatedInstances || 0
+            }));
+            setSeriesMap(prev => ({ ...prev, [studyUid]: seriesWithCounts }));
+        } catch (err) {
+            console.error('fetchSeriesForStudy failed:', err);
+        }
     };
 
     // Re-fetch data for expanded items when a deletion occurs
     useEffect(() => {
-        if (lastDeletionTime > 0 && db) {
+        if (lastDeletionTime > 0) {
             // 1. Re-fetch expanded patients/studies in Study Mode
             expandedPatients.forEach(id => {
                 if (patients.some(p => p.id === id)) {
@@ -141,7 +169,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                 });
             });
         }
-    }, [lastDeletionTime, db]);
+    }, [lastDeletionTime]);
 
     // Clipboard copy functionality
     useEffect(() => {
@@ -170,11 +198,20 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
         searchFilters.userComments !== '';
 
     const togglePatient = async (patientId: string) => {
-        const patient = patients.find(p => p.id === patientId);
+        console.log(`[DatabaseTable] togglePatient called for ID: ${patientId}`);
+        const patient = patients.find(p => String(p.id) === String(patientId));
+
+        if (!patient) {
+            console.warn(`[DatabaseTable] Patient not found for ID: ${patientId}. Available IDs:`, patients.map(p => p.id));
+            return;
+        }
+
         const newExpanded = new Set(expandedPatients);
         if (newExpanded.has(patientId)) {
+            console.log(`[DatabaseTable] Collapsing patient: ${patientId}`);
             newExpanded.delete(patientId);
         } else {
+            console.log(`[DatabaseTable] Expanding patient: ${patientId} (${patient.patientName})`);
             newExpanded.add(patientId);
             if (!studiesMap[patientId]) {
                 await fetchStudiesForPatient(patientId);
@@ -184,7 +221,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
 
         if (patient?._isStudy) {
             onPatientSelect(patient.patientID); // Real Patient ID for context
-            onStudySelect(patient.id); // Study UID for series browser
+            onStudySelect(patient.studyInstanceUID ?? null); // Use UID for series browser
         } else {
             onPatientSelect(patientId);
             onStudySelect(null);
@@ -242,7 +279,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                     return;
                 }
                 if (selectedPatientId) {
-                    const patient = patients.find(p => p.id === selectedPatientId);
+                    const patient = patients.find(p => String(p.id) === String(selectedPatientId));
                     const pName = patient?.patientName || 'Selected Item';
                     // In Study Mode, the "Patient" ID is actually the StudyInstanceUID
                     if (patient?._isStudy) {
@@ -425,7 +462,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                             <div
                                 onClick={() => togglePatient(patient.id)}
                                 className={`
-                                    grid grid-cols-[28px_1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-1.5 cursor-default transition-all items-center text-[11px] group border-b border-[#f0f0f0]
+                                    grid grid-cols-[28px_1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-1.5 cursor-pointer transition-all items-center text-[11px] group border-b border-[#f0f0f0]
                                     ${(patient._isStudy ? (selectedStudyUid === patient.id) : (selectedPatientId === patient.id))
                                         ? 'bg-[#007aff] text-white' // iOS / Horos Blue
                                         : pIdx % 2 === 0 ? 'bg-white' : 'bg-[#f5f5f7]' // Zebra Striping
@@ -445,7 +482,12 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                     />
                                 </div>
                                 <div
-                                    className="flex items-center gap-1.5 font-bold truncate cursor-text"
+                                    className={`flex items-center gap-1.5 font-bold truncate cursor-text ${selectedPatientId === patient.id
+                                        ? 'text-white'
+                                        : isPatientAnonymous(patient)
+                                            ? 'text-gray-400 font-medium'
+                                            : 'text-gray-900'
+                                        }`}
                                     onMouseEnter={() => setHoveredCell({ type: 'patientName', value: patient.patientName || '' })}
                                     onMouseLeave={() => setHoveredCell(null)}
                                 >
@@ -453,11 +495,18 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                         {expandedPatients.has(patient.id) ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                                     </div>
                                     {patient._isStudy ? <Calendar size={13} className={selectedPatientId === patient.id ? 'text-white' : 'text-orange-500/80'} /> : <User size={13} className={selectedPatientId === patient.id ? 'text-white' : 'text-peregrine-accent/70'} />}
-                                    <span>
+                                    <span className={!patient.patientName ? 'italic opacity-50' : ''}>
                                         {patient.patientName || (patient._isStudy ? '(Unknown Patient)' : '')}
                                     </span>
                                 </div>
-                                <div className={`font-mono text-[10px] truncate px-2 ${selectedPatientId === patient.id ? 'text-white/80' : 'text-gray-500'}`}>{patient.patientID}</div>
+                                <div className={`font-mono text-[10px] truncate px-2 ${selectedPatientId === patient.id
+                                    ? 'text-white/80'
+                                    : isPatientAnonymous(patient)
+                                        ? 'text-gray-300'
+                                        : 'text-gray-500'
+                                    }`}>
+                                    {patient.patientID}
+                                </div>
                                 <div className={`truncate px-2 ${selectedPatientId === patient.id ? 'text-white/80' : 'text-gray-400'}`}>{patient.patientBirthDate || '-'}</div>
                                 <div className={`px-2 ${selectedPatientId === patient.id ? 'text-white/80' : 'text-gray-400'}`}>{patient.patientSex || '-'}</div>
 
@@ -490,15 +539,10 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                         type="text"
                                         defaultValue={patient.userComments || ''}
                                         onBlur={async (e) => {
-                                            if (!db) return;
                                             const val = e.target.value;
                                             if (patient._isStudy) {
-                                                const doc = await db.studies.findOne(patient.id).exec();
-                                                if (doc) await doc.patch({ userComments: val });
-                                            } else {
-                                                // If it's a patient, we don't have userComments in patients yet, 
-                                                // but the provider maps the first study's comments. 
-                                                // For now, let's just make it editable if it's a study.
+                                                // @ts-ignore
+                                                await window.electron.db.run('UPDATE studies SET userComments = ? WHERE studyInstanceUID = ?', [val, patient.id]);
                                             }
                                         }}
                                         onClick={(e) => e.stopPropagation()}
@@ -530,14 +574,19 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                     (studiesMap[patient.id] || []).map((series: any) => (
                                         <div
                                             key={series.seriesInstanceUID}
-                                            onClick={(e) => { e.stopPropagation(); onSeriesSelect(series.seriesInstanceUID); }}
+                                            onClick={(e) => {
+                                                console.log('[DatabaseTable] Series clicked:', series.seriesInstanceUID);
+                                                e.stopPropagation();
+                                                onSeriesSelect(series.seriesInstanceUID, patient.id); // in Study Mode, patient.id is studyInstanceUID
+                                            }}
                                             onDoubleClick={(e) => {
+                                                console.log('[DatabaseTable] Series double-clicked:', series.seriesInstanceUID);
                                                 e.stopPropagation();
                                                 if ((window as any).electron?.openViewer) {
                                                     (window as any).electron.openViewer(series.seriesInstanceUID);
                                                 }
                                             }}
-                                            className={`grid grid-cols-[28px_1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-0.5 cursor-default text-[10px] items-center group/series transition-all ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-peregrine-accent text-white' : 'hover:bg-gray-100 text-gray-600'}`}
+                                            className={`grid grid-cols-[28px_1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-0.5 cursor-pointer text-[10px] items-center group/series transition-all ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-peregrine-accent text-white' : 'hover:bg-gray-100 text-gray-600'}`}
                                         >
                                             <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
                                                 <input
@@ -577,7 +626,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                 <span className={`px-1 rounded text-[8px] font-black ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-white/20 text-white' : 'bg-gray-50 text-gray-400 border border-gray-100 uppercase'}`}>{series.modality}</span>
                                             </div>
                                             <div className={`text-right font-mono font-bold px-2 ${selectedSeriesUid === series.seriesInstanceUID ? 'text-white' : 'text-[#ff3b30]'}`}>
-                                                {series.imageCount || 0}
+                                                {series.numberOfFrames && series.numberOfFrames > 1 ? `${series.numberOfFrames} F` : (series.imageCount || 0)}
                                             </div>
                                             <div className={selectedSeriesUid === series.seriesInstanceUID ? 'text-white/60' : 'text-gray-400'}>-</div>
                                             <div className="flex justify-center group/action">
@@ -597,6 +646,11 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                         <React.Fragment key={study.studyInstanceUID}>
                                             <div
                                                 onClick={(e) => { e.stopPropagation(); toggleStudy(study.studyInstanceUID); }}
+                                                onContextMenu={(e) => {
+                                                    e.preventDefault();
+                                                    // @ts-ignore
+                                                    window.electron.showContextMenu('study', study);
+                                                }}
                                                 className={`grid grid-cols-[28px_1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-1 border-b border-[#f5f5f7] items-center text-[11px] cursor-default transition-colors ${selectedStudyUid === study.studyInstanceUID ? 'bg-blue-50/80' : 'bg-gray-50/50 hover:bg-gray-100/50'}`}
                                             >
                                                 <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
@@ -640,7 +694,12 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                     {(seriesMap[study.studyInstanceUID] || []).map((series: any) => (
                                                         <div
                                                             key={series.seriesInstanceUID}
-                                                            onClick={(e) => { e.stopPropagation(); onSeriesSelect(series.seriesInstanceUID); }}
+                                                            onClick={(e) => { e.stopPropagation(); onSeriesSelect(series.seriesInstanceUID, study.studyInstanceUID); }}
+                                                            onContextMenu={(e) => {
+                                                                e.preventDefault();
+                                                                // @ts-ignore
+                                                                window.electron.showContextMenu('series', series);
+                                                            }}
                                                             className={`grid grid-cols-[28px_1.2fr_0.8fr_0.8fr_0.3fr_0.8fr_1.2fr_0.6fr_0.4fr_1.2fr_32px] px-4 py-1 border-b border-[#f8f8fa]/50 items-center text-[10px] cursor-default transition-colors ${selectedSeriesUid === series.seriesInstanceUID ? 'bg-blue-50/40' : 'hover:bg-gray-100/30'}`}
                                                         >
                                                             <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
@@ -668,7 +727,7 @@ export const DatabaseTable: React.FC<DatabaseTableProps> = ({
                                                             <div className="px-2 text-gray-400">-</div>
                                                             <div className="px-2 text-gray-400">-</div>
                                                             <div className="px-2 text-gray-400 uppercase">{series.modality}</div>
-                                                            <div className="px-2 text-gray-[#ff3b30] font-bold text-right pr-4">{series.imageCount || 0}</div>
+                                                            <div className="px-2 text-gray-[#ff3b30] font-bold text-right pr-4">{series.numberOfFrames && series.numberOfFrames > 1 ? `${series.numberOfFrames} F` : (series.imageCount || 0)}</div>
                                                             <div className="px-2 truncate text-gray-400 italic"></div>
                                                             <div className="flex justify-center group/action">
                                                                 <button

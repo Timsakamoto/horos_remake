@@ -23,7 +23,7 @@ import {
 } from '@cornerstonejs/tools';
 import { useViewer } from './ViewerContext';
 
-const RENDERING_ENGINE_ID = 'peregrine-engine';
+// Per-viewport engine IDs are now used: 'peregrine-engine-vp-0', 'peregrine-engine-vp-1', etc.
 const TOOL_GROUP_ID = 'peregrine-tool-group';
 
 export const CornerstoneManager = () => {
@@ -88,9 +88,11 @@ export const CornerstoneManager = () => {
                 console.log('Registered Viewports:', viewportsIds);
 
                 viewportsIds?.forEach(vpId => {
-                    const vp = getRenderingEngine(RENDERING_ENGINE_ID)?.getViewport(vpId);
+                    // Try per-viewport engine ID pattern
+                    const engine = getRenderingEngine(`peregrine-engine-${vpId}`);
+                    const vp = engine?.getViewport(vpId);
                     const sliceId = (vp as any).getCurrentImageId?.();
-                    const metadata = metaData.get('imagePlaneModule', sliceId);
+                    const metadata = sliceId ? metaData.get('imagePlaneModule', sliceId) : null;
                     console.log(`Viewport ${vpId}:`, {
                         type: vp?.type,
                         imageId: sliceId,
@@ -104,11 +106,14 @@ export const CornerstoneManager = () => {
         prepare();
 
         return () => {
-            console.log('[CornerstoneManager] Cleaning up Rendering Engine');
-            try {
-                const engine = getRenderingEngine(RENDERING_ENGINE_ID);
-                if (engine) engine.destroy();
-            } catch (e) { /* ignore */ }
+            console.log('[CornerstoneManager] Cleaning up Rendering Engines');
+            // Clean up all per-viewport engines
+            for (let i = 0; i < 12; i++) {
+                try {
+                    const engine = getRenderingEngine(`peregrine-engine-vp-${i}`);
+                    if (engine) engine.destroy();
+                } catch (e) { /* ignore */ }
+            }
         };
     }, []);
 
@@ -122,7 +127,9 @@ export const CornerstoneManager = () => {
             return;
         }
 
-        const engine = getRenderingEngine(RENDERING_ENGINE_ID);
+        const vpState = viewports[activeViewportIndex];
+        if (!vpState) return;
+        const engine = getRenderingEngine(`peregrine-engine-${vpState.id}`);
         if (!engine) return;
 
         const rotate = () => {

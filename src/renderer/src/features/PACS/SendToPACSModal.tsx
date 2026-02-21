@@ -5,12 +5,11 @@ import { useDatabase } from '../Database/DatabaseProvider';
 import { useSettings } from '../Settings/SettingsContext';
 
 export const SendToPACSModal: React.FC = () => {
-    const { servers, sendToPacs, activeJobs } = usePACS();
+    const { servers, sendToPacs } = usePACS();
     const {
         checkedItems,
         setShowSendModal,
-        showSendModal,
-        db
+        showSendModal
     } = useDatabase();
     const { databasePath } = useSettings();
 
@@ -26,16 +25,13 @@ export const SendToPACSModal: React.FC = () => {
             setStatus('idle');
             setError(null);
             setProgress(null);
-            if (activeJobs.length > 0 && selectedServerId) {
-                // Potential to link to active job progress
-            }
         }
     }, [showSendModal]);
 
     if (!showSendModal) return null;
 
     const handleSend = async () => {
-        if (!selectedServerId || checkedItems.size === 0 || !db) return;
+        if (!selectedServerId || checkedItems.size === 0) return;
 
         const server = servers.find(s => s.id === selectedServerId);
         if (!server) return;
@@ -45,42 +41,34 @@ export const SendToPACSModal: React.FC = () => {
         setError(null);
 
         try {
-            // 1. Resolve all file paths for checked items
             const ids = Array.from(checkedItems);
-
-            // Optimization: If we have many items, we might want to do this in chunks
-            // For now, let's resolve series-by-series
-
-            // We need to know which IDs are series, studies, or patients
-            // actually the toggleSelection logic ensures that if a parent is selected, its series are also selected.
-            // But we might have mixed selection.
-            // Let's just find all unique seriesInstanceUIDs represented by the checkedItems.
-
             const seriesUids = new Set<string>();
 
+            const dbProxy = (window as any).electron.db;
+
             for (const id of ids) {
-                // Check if it's a series
-                const seriesDoc = await db.series.findOne(id).exec();
+                // 1. Try Series
+                const seriesDoc = await dbProxy.get('SELECT seriesInstanceUID FROM series WHERE seriesInstanceUID = ?', [id]);
                 if (seriesDoc) {
                     seriesUids.add(id);
                     continue;
                 }
 
-                // Check if it's a study
-                const studyDoc = await db.studies.findOne(id).exec();
+                // 2. Try Study
+                const studyDoc = await dbProxy.get('SELECT studyInstanceUID FROM studies WHERE studyInstanceUID = ?', [id]);
                 if (studyDoc) {
-                    const series = await db.series.find({ selector: { studyInstanceUID: id } }).exec();
-                    series.forEach(s => seriesUids.add(s.seriesInstanceUID));
+                    const series = await dbProxy.query('SELECT seriesInstanceUID FROM series WHERE studyInstanceUID = ?', [id]);
+                    series.forEach((s: any) => seriesUids.add(s.seriesInstanceUID));
                     continue;
                 }
 
-                // Check if it's a patient
-                const patientDoc = await db.patients.findOne(id).exec();
+                // 3. Try Patient (Numeric ID or PatientID)
+                const patientDoc = await dbProxy.get('SELECT id FROM patients WHERE id = ? OR patientID = ?', [id, id]);
                 if (patientDoc) {
-                    const studies = await db.studies.find({ selector: { patientId: id } }).exec();
+                    const studies = await dbProxy.query('SELECT studyInstanceUID FROM studies WHERE patientId = ?', [patientDoc.id]);
                     for (const st of studies) {
-                        const series = await db.series.find({ selector: { studyInstanceUID: st.studyInstanceUID } }).exec();
-                        series.forEach(s => seriesUids.add(s.seriesInstanceUID));
+                        const series = await dbProxy.query('SELECT seriesInstanceUID FROM series WHERE studyInstanceUID = ?', [st.studyInstanceUID]);
+                        series.forEach((s: any) => seriesUids.add(s.seriesInstanceUID));
                     }
                 }
             }
@@ -89,29 +77,34 @@ export const SendToPACSModal: React.FC = () => {
                 throw new Error('No series found to send.');
             }
 
-            // 2. Get all file paths for these series
-            const allFiles = await db.images.find({
-                selector: { seriesInstanceUID: { $in: Array.from(seriesUids) } }
-            }).exec();
+            // 4. Get all file paths for these series
+            const uidsArr = Array.from(seriesUids);
+            const placeholders = uidsArr.map(() => '?').join(',');
+            const allFiles = await dbProxy.query(
+                `SELECT i.filePath FROM instances i
+                 JOIN series s ON i.seriesId = s.id
+                 WHERE s.seriesInstanceUID IN (${placeholders})`,
+                uidsArr
+            );
 
-            const rawPaths = allFiles.map(f => f.filePath).filter(Boolean) as string[];
+            const rawPaths = allFiles.map((f: any) => f.filePath).filter(Boolean) as string[];
 
             if (rawPaths.length === 0) {
                 throw new Error('No DICOM files found for selected items.');
             }
 
-            // Resolve absolute paths for storescu
-            const paths = await Promise.all(rawPaths.map(async (p) => {
-                // Check if already absolute (Unix / or Windows drive)
+            // Resolve absolute paths
+            const paths = rawPaths.map((p) => {
                 if (p.startsWith('/') || /^[a-zA-Z]:/.test(p)) return p;
                 if (!databasePath) return p;
-                return window.electron.join(databasePath, p);
-            }));
+                const sep = databasePath.includes('\\') ? '\\' : '/';
+                return `${databasePath.replace(/[\\/]$/, '')}${sep}${p.replace(/^[\\/]/, '')}`;
+            });
 
             setStatus('sending');
             setProgress({ total: paths.length, sent: 0 });
 
-            // 3. Initiate send
+            // 5. Initiate send
             const success = await sendToPacs(server, paths);
 
             if (success) {

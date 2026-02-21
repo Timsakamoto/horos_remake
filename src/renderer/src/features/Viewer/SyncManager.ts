@@ -111,12 +111,9 @@ export const anatomicalSyncCallback = (
         const newIndex = targetImageIds.indexOf(closestImageId);
 
         if (newIndex !== -1) {
-            // Perform Scan
             stackTarget.setImageIdIndex(newIndex);
-
-            // Restore "Always Fit" behavior requested by user
-            stackTarget.resetCamera();
-
+            // NOTE: Do NOT call resetCamera() here — it destroys the target viewport's
+            // zoom/pan state and can cause visual corruption during layout changes.
             stackTarget.render();
         }
     }

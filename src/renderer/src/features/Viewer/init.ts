@@ -45,8 +45,10 @@ export const initCornerstone = async () => {
         console.log('Cornerstone: Initializing Core & Tools...');
 
         // 1. Init Core
+        registerElectronImageLoader(); // Register again to be sure
         await csRenderInit();
         await csToolsInit();
+        registerElectronImageLoader(); // And once more after engine init
 
         // 1.1 Configure Cache (2GB)
         cornerstone.cache.setMaxCacheSize(2048 * 1024 * 1024);
@@ -94,7 +96,17 @@ export const initCornerstone = async () => {
         try {
             cornerstoneDICOMImageLoader.wadouri.register(cornerstone);
             cornerstoneDICOMImageLoader.wadors.register(cornerstone);
-        } catch (e) { /* ignore */ }
+
+            // Register Codecs explicitly for non-worker environment
+            const codecCharls = await import('@cornerstonejs/codec-charls');
+            // @ts-ignore
+            if (codecCharls && (cornerstoneDICOMImageLoader as any).registerCodec) {
+                (cornerstoneDICOMImageLoader as any).registerCodec('1.2.840.10008.1.2.4.80', codecCharls.default || codecCharls);
+                console.log('Cornerstone: Registered JPEG-LS (CharLS) codec.');
+            }
+        } catch (e) {
+            console.warn('Cornerstone: Codec registration failed:', e);
+        }
 
         // 4. Register Volume Loaders
         try {

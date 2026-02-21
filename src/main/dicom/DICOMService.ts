@@ -557,6 +557,10 @@ export class DICOMService {
                         if (filePath) {
                             this.logInfo(`PACS Listener: Detected incoming file: ${filePath}`);
                             jobManager.emit('storageProgress', { filePath });
+
+                            // Proactive refinement: Trigger immediate indexing in main process
+                            const { ImportManager } = require('../database/ImportManager');
+                            ImportManager.getInstance().importFiles([filePath]);
                         }
                     }
                 }

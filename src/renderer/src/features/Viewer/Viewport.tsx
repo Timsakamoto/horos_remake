@@ -87,7 +87,7 @@ export const Viewport = ({
         initialWindowCenter,
     });
 
-    // Handle Tool Group & Ref Line Sync Registration
+    // Handle Tool Group & Ref Line Sync Registration + Cleanup
     useEffect(() => {
         if (!isReady || isThumbnail) return;
         const toolGroup = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
@@ -95,6 +95,20 @@ export const Viewport = ({
 
         // Auto-enable Reference Lines Sync
         addViewportToRefLineSync(viewportId, renderingEngineId);
+
+        // Cleanup: disable Cornerstone viewport on unmount to prevent orphans
+        return () => {
+            try {
+                removeViewportFromSync(viewportId, renderingEngineId);
+                const engine = getRenderingEngine(renderingEngineId);
+                if (engine?.getViewport(viewportId)) {
+                    engine.disableElement(viewportId);
+                }
+                toolGroup?.removeViewports(renderingEngineId, viewportId);
+            } catch (e) {
+                // Ignore errors during cleanup
+            }
+        };
     }, [isReady, viewportId, renderingEngineId, isThumbnail]);
 
     // Handle Synchronization
@@ -130,6 +144,7 @@ export const Viewport = ({
         if (!viewport) return;
 
         const targetIndex = val - 1;
+        console.log(`[Viewport] Slider Change: ${val} (Index: ${targetIndex}) ViewportType: ${viewport.type}`);
 
         if ((viewport as any).setSliceIndex) {
             (viewport as any).setSliceIndex(targetIndex);
@@ -146,6 +161,7 @@ export const Viewport = ({
 
         viewport.render();
     };
+
 
     // Mac Scroll Optimization (Magic Mouse / Trackpad)
     useEffect(() => {

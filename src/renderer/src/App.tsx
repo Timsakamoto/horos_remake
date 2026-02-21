@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Activity, Layers, Zap, Database, Folder, Bookmark } from 'lucide-react';
 import { ThumbnailStrip } from './features/Viewer/ThumbnailStrip';
 import { Viewport } from './features/Viewer/Viewport';
@@ -15,13 +15,13 @@ import { PACSProvider, usePACS } from './features/PACS/PACSProvider';
 import { ViewerProvider, useViewer } from './features/Viewer/ViewerContext';
 import { CornerstoneManager } from './features/Viewer/CornerstoneManager';
 import { SendToPACSModal } from './features/PACS/SendToPACSModal';
-import { ToolbarMode, ViewportState, ActiveLUT } from './features/Viewer/types';
+import { ToolbarMode, ActiveLUT } from './features/Viewer/types';
 import { ActivityManager } from './features/PACS/ActivityManager';
 import { AnnotationList } from './features/Viewer/AnnotationList';
 
 const AppContent = () => {
-    const { patients, importPaths, handleImport, db, smartFolders, activeSmartFolderId, applySmartFolder, saveSmartFolder, prefetchStudyThumbnails } = useDatabase();
-    const { setShowSettings, viewMode: settingsViewMode } = useSettings();
+    const { patients, handleImport, smartFolders, activeSmartFolderId, applySmartFolder, saveSmartFolder, prefetchStudyThumbnails } = useDatabase();
+    const { setShowSettings } = useSettings();
     const { servers, activeServer, setActiveServer, showActivityManager, setShowActivityManager } = usePACS();
 
     const {
@@ -50,6 +50,18 @@ const AppContent = () => {
     const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
     const [selectedStudyUid, setSelectedStudyUid] = useState<string | null>(null);
 
+    // Auto-select first patient on launch if no selection
+    useEffect(() => {
+        if (!selectedPatientId && patients.length > 0) {
+            const firstPatient = patients[0];
+            setSelectedPatientId(firstPatient.id);
+            // If it's a direct study (database search mode or single study)
+            if (firstPatient._isStudy && firstPatient.studyInstanceUID) {
+                setSelectedStudyUid(firstPatient.studyInstanceUID);
+            }
+        }
+    }, [patients, selectedPatientId]);
+
     // Trigger thumbnail prefetching when a study is selected
     useEffect(() => {
         if (selectedStudyUid) {
@@ -70,31 +82,48 @@ const AppContent = () => {
 
     // Helper to find adjacent series
     const switchSeries = async (direction: 'next' | 'prev') => {
-        if (!db || !selectedStudyUid) return;
+        if (!selectedStudyUid) return;
 
         const activeSeriesUid = viewports[activeViewportIndex]?.seriesUid;
         if (!activeSeriesUid) return;
 
-        // Fetch all series for this study, sorted by number
-        const seriesList = await db.series.find({
-            selector: { studyInstanceUID: selectedStudyUid },
-            sort: [{ seriesNumber: 'asc' }]
-        }).exec();
+        try {
+            // Fetch all series for this study, sorted by number using IPC
+            const seriesList = await (window as any).electron.db.query(
+                'SELECT seriesInstanceUID FROM series WHERE studyInstanceUID = ? ORDER BY seriesNumber ASC',
+                [selectedStudyUid]
+            );
 
-        if (!seriesList || seriesList.length === 0) return;
+            if (!seriesList || seriesList.length === 0) return;
 
-        const currentIndex = seriesList.findIndex(s => s.seriesInstanceUID === activeSeriesUid);
-        if (currentIndex === -1) return;
+            const currentIndex = seriesList.findIndex((s: any) => s.seriesInstanceUID === activeSeriesUid);
+            if (currentIndex === -1) return;
 
-        let newIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
+            let newIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
 
-        // Clamp index
-        if (newIndex < 0) newIndex = 0;
-        if (newIndex >= seriesList.length) newIndex = seriesList.length - 1;
+            // Clamp index
+            if (newIndex < 0) newIndex = 0;
+            if (newIndex >= seriesList.length) newIndex = seriesList.length - 1;
 
-        if (newIndex !== currentIndex) {
-            const newSeriesUid = seriesList[newIndex].seriesInstanceUID;
-            onSeriesSelect(newSeriesUid);
+            if (newIndex !== currentIndex) {
+                const newSeriesUid = seriesList[newIndex].seriesInstanceUID;
+                onSeriesSelect(newSeriesUid);
+            }
+        } catch (err) {
+            console.error('[App] switchSeries error:', err);
+        }
+    };
+
+    const handleSeriesSelect = (seriesUid: string | null, indexOrStudyUid?: any) => {
+        console.log(`[App] handleSeriesSelect: seriesUid=${seriesUid}, indexOrStudyUid=${indexOrStudyUid}, appMode=${appMode}`);
+
+        if (typeof indexOrStudyUid === 'string') {
+            // It's a studyUid from DatabaseTable
+            setSelectedStudyUid(indexOrStudyUid);
+            onSeriesSelect(seriesUid);
+        } else {
+            // It's an index or undefined (usually from internal viewer use)
+            onSeriesSelect(seriesUid, indexOrStudyUid);
         }
     };
 
@@ -111,10 +140,9 @@ const AppContent = () => {
 
         // Arrow Keys for Active Viewport
         if (appMode === 'VIEWER') {
-            const engine = (window as any).cornerstone?.getRenderingEngine('peregrine-engine');
-            if (!engine) return;
-
             let viewportId = viewports[activeViewportIndex]?.id;
+            const engine = viewportId ? (window as any).cornerstone?.getRenderingEngine(`peregrine-engine-${viewportId}`) : null;
+            if (!engine) return;
 
             // In MPR mode, there isn't a single "active" index in the same grid sense,
             // but we can default to the Axial viewport for paging if in MPR.
@@ -144,320 +172,130 @@ const AppContent = () => {
                         // Volume Viewport
                         const vp = viewport as any;
                         const current = vp.getSliceIndex();
-                        const total = vp.getNumberOfSlices();
+                        const total = vp.getDimensions()[2];
                         const next = current + delta;
                         if (next >= 0 && next < total) {
-                            // Using delta scroll is safer for volumes
-                            const { utilities: csToolsUtils } = (window as any).cornerstoneTools || {};
-                            if (csToolsUtils?.scroll) {
-                                csToolsUtils.scroll(vp, { delta });
-                            } else {
-                                // Fallback to setSliceIndex if utilities not available
-                                vp.setSliceIndex(next);
-                            }
-                        } else if (activeView !== 'MPR' && activeView !== 'Axial' && activeView !== 'Sagittal' && activeView !== 'Coronal') {
-                            // Only switch series in 2D mode
-                            switchSeries(delta < 0 ? 'prev' : 'next');
+                            vp.setSliceIndex(next);
                         }
                     }
-                    viewport.render();
-                } else if (e.key === 'ArrowLeft') {
-                    e.preventDefault();
-                    await switchSeries('prev');
-                } else if (e.key === 'ArrowRight') {
-                    e.preventDefault();
-                    await switchSeries('next');
                 }
             }
         }
     };
 
-    // 1. Initialization Effect (Runs ONCE on mount/db)
-    useEffect(() => {
-        // Handle URL parameters...
-        const params = new URLSearchParams(window.location.search);
-        const view = params.get('view');
-        const seriesUid = params.get('seriesUid');
-
-        if (view === 'viewer' && seriesUid && db) {
-            const initViewer = async () => {
-                if (!db) return;
-                try {
-                    const seriesDoc = await db.series.findOne({ selector: { seriesInstanceUID: seriesUid } }).exec();
-                    if (seriesDoc) {
-                        const studyDoc = await db.studies.findOne({ selector: { studyInstanceUID: seriesDoc.studyInstanceUID } }).exec();
-                        if (studyDoc) {
-                            setSelectedPatientId(studyDoc.patientId);
-                            setSelectedStudyUid(studyDoc.studyInstanceUID);
-                        }
-                    }
-                    setViewports(prev => {
-                        const next = [...prev];
-                        next[0] = { ...next[0], seriesUid };
-                        return next;
-                    });
-                    handleViewChange('2D');
-                    // Clear search params to prevent jumping back on reload
-                    const url = new URL(window.location.href);
-                    url.search = '';
-                    window.history.replaceState({}, '', url.toString());
-                } catch (err) { console.error(err); }
-            };
-            initViewer();
-        }
-    }, [db]); // Only re-run if DB connection changes
-
-    // TAB shortcut for overlays
-    const handleKeyDownOverlays = (e: KeyboardEvent) => {
-        if (e.key === 'Tab') {
-            e.preventDefault();
-            setShowOverlays(prev => !prev);
-        }
-    };
-
-    // 2. Global Key Handler Effect (Re-binds when state changes)
     useEffect(() => {
         window.addEventListener('keydown', handleKeyDownGlobal);
-        window.addEventListener('keydown', handleKeyDownOverlays);
-        return () => {
-            window.removeEventListener('keydown', handleKeyDownGlobal);
-            window.removeEventListener('keydown', handleKeyDownOverlays);
-        };
-    }, [db, activeViewportIndex, viewports, selectedStudyUid, activeView, setActiveTool, setShowOverlays]);
+        return () => window.removeEventListener('keydown', handleKeyDownGlobal);
+    }, [activeViewportIndex, activeView, viewports, selectedStudyUid]);
 
-    // Actions and Tool Shortcuts
-    useEffect(() => {
-        const handleShortcuts = (e: KeyboardEvent) => {
-            if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
-            switch (e.key.toLowerCase()) {
-                case 'w': setActiveTool('WindowLevel'); break;
-                case 'z': setActiveTool('Zoom'); break;
-                case 'p': setActiveTool('Pan'); break;
-                case 'l': setActiveTool('Length'); break;
-                case 'm': setActiveTool('Magnify'); break;
+    const onDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        setDropZone(null);
+
+        const jsonData = e.dataTransfer.getData('application/json');
+        const seriesUidFromType = e.dataTransfer.getData('seriesUid');
+        const textData = e.dataTransfer.getData('text/plain');
+
+        let seriesUid: string | null = null;
+
+        if (jsonData) {
+            try {
+                const parsed = JSON.parse(jsonData);
+                seriesUid = parsed.seriesUid || jsonData; // JSON でなければ生の文字列を試す
+            } catch (err) {
+                seriesUid = jsonData;
             }
-        };
-        window.addEventListener('keydown', handleShortcuts);
-        return () => window.removeEventListener('keydown', handleShortcuts);
-    }, [setActiveTool]);
+        } else {
+            seriesUid = seriesUidFromType || textData;
+        }
 
-    const onOpenViewer = () => {
-        const activeSeriesUid = viewports[activeViewportIndex]?.seriesUid;
-        if (activeSeriesUid && (window as any).electron?.openViewer) {
-            (window as any).electron.openViewer(activeSeriesUid);
+        if (seriesUid) {
+            onSeriesSelect(seriesUid);
         }
     };
 
-    const [dropZone, setDropZone] = useState<{ index: number; position: 'top' | 'bottom' | 'left' | 'right' | 'center' } | null>(null);
+    const [dropZone, setDropZone] = useState<{ index: number, position: 'relative' | 'left' | 'right' | 'top' | 'bottom' | 'center' } | null>(null);
 
     const onDragOver = (e: React.DragEvent) => {
         e.preventDefault();
-        e.stopPropagation();
     };
 
-    const onDrop = async (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setDropZone(null);
-
-        const files = Array.from(e.dataTransfer.files);
-        const paths = files.map(f => (f as any).path).filter(Boolean);
-
-        if (paths.length > 0) {
-            await importPaths(paths);
-        }
-    };
-
-    // Drag and Drop Handlers for Viewport (Smart Grid)
     const handleViewportDragOver = (e: React.DragEvent, index: number) => {
         e.preventDefault();
-        e.stopPropagation();
-
-        if (!e.dataTransfer.types.includes('seriesuid')) return;
-
-        e.dataTransfer.dropEffect = 'copy';
-
-        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        const rect = e.currentTarget.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
-        const width = rect.width;
-        const height = rect.height;
 
-        const EDGE_THRESHOLD = 0.25;
-        let position: 'top' | 'bottom' | 'left' | 'right' | 'center' = 'center';
+        const pad = rect.width * 0.2;
+        let pos: 'left' | 'right' | 'top' | 'bottom' | 'center' = 'center';
 
-        const canExpandCol = layout.cols < 4;
-        const canExpandRow = layout.rows < 3;
+        if (x < pad) pos = 'left';
+        else if (x > rect.width - pad) pos = 'right';
+        else if (y < pad) pos = 'top';
+        else if (y > rect.height - pad) pos = 'bottom';
 
-        const relX = x / width;
-        const relY = y / height;
-
-        const distLeft = relX;
-        const distRight = 1 - relX;
-        const distTop = relY;
-        const distBottom = 1 - relY;
-
-        const min = Math.min(distLeft, distRight, distTop, distBottom);
-
-        if (min < EDGE_THRESHOLD) {
-            if (min === distLeft && canExpandCol) position = 'left';
-            else if (min === distRight && canExpandCol) position = 'right';
-            else if (min === distTop && canExpandRow) position = 'top';
-            else if (min === distBottom && canExpandRow) position = 'bottom';
-        }
-
-        if (dropZone?.index !== index || dropZone?.position !== position) {
-            setDropZone({ index, position });
-        }
+        setDropZone({ index, position: pos });
     };
 
     const handleViewportDrop = (e: React.DragEvent, index: number) => {
+        e.preventDefault();
+        const dz = dropZone;
+        setDropZone(null);
+
         try {
-            e.preventDefault();
-            e.stopPropagation();
+            const jsonData = e.dataTransfer.getData('application/json');
+            const seriesUidFromType = e.dataTransfer.getData('seriesUid');
+            const textData = e.dataTransfer.getData('text/plain');
 
-            const currentDropZone = dropZone;
-            setDropZone(null);
+            let seriesUid: string | null = null;
 
-            const seriesUid = e.dataTransfer.getData('seriesUid') || e.dataTransfer.getData('seriesuid') || e.dataTransfer.getData('text/plain');
+            if (jsonData) {
+                try {
+                    const parsed = JSON.parse(jsonData);
+                    seriesUid = parsed.seriesUid || jsonData;
+                } catch (err) {
+                    seriesUid = jsonData;
+                }
+            } else {
+                seriesUid = seriesUidFromType || textData;
+            }
+
             if (!seriesUid) return;
 
-            if (!currentDropZone || currentDropZone.index !== index || currentDropZone.position === 'center') {
-                if (viewports[index].seriesUid === seriesUid) return;
+            console.log(`[App] handleViewportDrop: seriesUid=${seriesUid}, dropIndex=${index}, dz=${JSON.stringify(dz)}, activeViewportIndex=${activeViewportIndex}`);
+
+            if (!dz || dz.position === 'center') {
+                // Drop onto center: replace that viewport's data (targeted by index)
                 onSeriesSelect(seriesUid, index);
-                return;
+            } else {
+                // Split logic
+                const newRows = dz.position === 'top' || dz.position === 'bottom' ? layout.rows + 1 : layout.rows;
+                const newCols = dz.position === 'left' || dz.position === 'right' ? layout.cols + 1 : layout.cols;
+                handleLayoutChange(newRows, newCols);
+                const newIndex = Math.min(
+                    index + (dz.position === 'right' || dz.position === 'bottom' ? 1 : 0),
+                    newRows * newCols - 1 // Clamp to max slot in new layout
+                );
+                console.log(`[App] Split drop: new layout ${newRows}x${newCols}, targeting index=${newIndex}`);
+                onSeriesSelect(seriesUid, newIndex);
             }
-
-            const { position } = currentDropZone;
-            const { cols, rows } = layout;
-
-            const curR = Math.floor(index / cols);
-            const curC = index % cols;
-
-            let newCols = cols;
-            let newRows = rows;
-            let insertIndices = { r: -1, c: -1 };
-
-            if (position === 'left') { newCols++; insertIndices = { r: curR, c: curC }; }
-            else if (position === 'right') { newCols++; insertIndices = { r: curR, c: curC + 1 }; }
-            else if (position === 'top') { newRows++; insertIndices = { r: curR, c: curC }; }
-            else if (position === 'bottom') { newRows++; insertIndices = { r: curR + 1, c: curC }; }
-
-            if (newCols > 4) newCols = 4;
-            if (newRows > 3) newRows = 3;
-
-            const nextViewports: ViewportState[] = new Array(12).fill(null).map((_, i) => ({
-                id: `vp-${i}`,
-                seriesUid: null,
-                orientation: 'Default',
-                voi: null,
-                projectionMode: 'NORMAL',
-                activeLUT: 'Grayscale'
-            }));
-
-            for (let r = 0; r < rows; r++) {
-                for (let c = 0; c < cols; c++) {
-                    const oldIdx = r * cols + c;
-                    const existing = viewports[oldIdx];
-                    if (!existing || !existing.seriesUid) continue;
-
-                    let targetR = r;
-                    let targetC = c;
-
-                    if (position === 'left' && c >= insertIndices.c) targetC++;
-                    else if (position === 'right' && c >= insertIndices.c) targetC++;
-                    else if (position === 'top' && r >= insertIndices.r) targetR++;
-                    else if (position === 'bottom' && r >= insertIndices.r) targetR++;
-
-                    if (targetC >= newCols || targetR >= newRows) continue;
-
-                    const newIdx = targetR * newCols + targetC;
-                    if (newIdx < 12) {
-                        nextViewports[newIdx] = { ...existing, id: `vp-${newIdx}` };
-                    }
-                }
-            }
-
-            const newSeriesIdx = insertIndices.r * newCols + insertIndices.c;
-            if (newSeriesIdx < 12 && newSeriesIdx >= 0) {
-                nextViewports[newSeriesIdx] = {
-                    id: `vp-${newSeriesIdx}`,
-                    seriesUid,
-                    orientation: 'Default',
-                    voi: null,
-                    projectionMode: 'NORMAL',
-                    activeLUT: 'Grayscale'
-                };
-            }
-
-            handleLayoutChange(newRows, newCols);
-            setViewports(nextViewports as ViewportState[]);
-            setActiveViewportIndex(newSeriesIdx);
-
         } catch (err) {
-            console.error('Drag drop error:', err);
-            setDropZone(null);
+            console.error('[App] handleViewportDrop error:', err);
         }
     };
-
-    // Right Double-Click Removal Logic
-    const lastRightClick = useRef<{ time: number, index: number } | null>(null);
 
     const handleViewportRightClick = (e: React.MouseEvent, index: number) => {
         e.preventDefault();
-        e.stopPropagation();
+        setActiveViewportIndex(index);
+        // Could open a context menu here
+    };
 
-        if (layout.rows === 1 && layout.cols === 1) return;
-
-        const now = Date.now();
-        const DOUBLE_CLICK_THRESHOLD = 300;
-
-        if (lastRightClick.current &&
-            lastRightClick.current.index === index &&
-            (now - lastRightClick.current.time) < DOUBLE_CLICK_THRESHOLD) {
-            removeViewport(index);
-            lastRightClick.current = null;
-        } else {
-            lastRightClick.current = { time: now, index };
+    const onOpenViewer = () => {
+        if (selectedStudyUid || activeSeriesUid) {
+            handleViewChange('2D');
         }
     };
 
-    const removeViewport = (indexToRemove: number) => {
-        const currentSeries = viewports.map(vp => vp.seriesUid);
-        const updatedSeriesList = [...currentSeries.slice(0, indexToRemove), ...currentSeries.slice(indexToRemove + 1)];
-        while (updatedSeriesList.length < 12) updatedSeriesList.push(null);
-
-        const nextViewports = viewports.map((vp, i) => {
-            const seriesUid = updatedSeriesList[i];
-            const originalVp = seriesUid ? viewports.find(v => v.seriesUid === seriesUid) : null;
-            return {
-                ...vp,
-                seriesUid: seriesUid,
-                orientation: originalVp ? originalVp.orientation : 'Default',
-                voi: originalVp ? originalVp.voi : null
-            };
-        });
-        setViewports(nextViewports);
-
-        const activeCount = updatedSeriesList.filter(uid => uid !== null).length;
-        let { rows, cols } = layout;
-
-        let canReduce = true;
-        while (canReduce) {
-            canReduce = false;
-            if (rows > 1 && activeCount <= (rows - 1) * cols) { rows--; canReduce = true; }
-            else if (cols > 1 && activeCount <= rows * (cols - 1)) { cols--; canReduce = true; }
-        }
-
-        if (rows !== layout.rows || cols !== layout.cols) handleLayoutChange(rows, cols);
-
-        if (activeViewportIndex === indexToRemove) {
-            const newActive = activeCount > 0 ? Math.min(indexToRemove, activeCount - 1) : 0;
-            setActiveViewportIndex(newActive);
-        } else if (activeViewportIndex > indexToRemove) {
-            setActiveViewportIndex(activeViewportIndex - 1);
-        }
-    };
 
     const activeSeriesUid = viewports[activeViewportIndex]?.seriesUid || null;
     const [activeModality, setActiveModality] = useState<string | null>(null);
@@ -465,25 +303,26 @@ const AppContent = () => {
     const onOpenSettings = () => setShowSettings(true);
 
     useEffect(() => {
-        if (!db || !activeSeriesUid) {
+        if (!activeSeriesUid) {
             setActiveModality(null);
             return;
         }
-        db.series.findOne(activeSeriesUid).exec().then(s => {
+        (window as any).electron.db.get('SELECT modality FROM series WHERE seriesInstanceUID = ?', [activeSeriesUid]).then((s: any) => {
             setActiveModality(s ? s.modality : null);
         });
-    }, [db, activeSeriesUid]);
+    }, [activeSeriesUid]);
+
     const visibleViewports = viewports.slice(0, layout.rows * layout.cols);
 
     if (!isInitReady) {
         return (
             <div
                 className="flex h-screen w-screen bg-black text-white font-sans overflow-hidden select-none"
-                onDragEnd={() => setDropZone(null)} // Global cleanup for drag operations
+                onDragEnd={() => setDropZone(null)}
             >
-                <div className="flex flex-col items-center justify-center">
+                <div className="flex flex-col items-center justify-center m-auto">
                     <div className="w-10 h-10 border-4 border-peregrine-accent border-t-transparent rounded-full animate-spin" />
-                    <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Initializing Cornerstone...</span>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-white/40 mt-4">Initializing Cornerstone...</span>
                 </div>
             </div>
         );
@@ -558,163 +397,144 @@ const AppContent = () => {
                 onFusionTransferFunctionChange={(mode) => setViewportFusionTransferFunction(activeViewportIndex, mode)}
                 showAnnotationList={showAnnotationList}
                 onToggleAnnotationList={() => setShowAnnotationList(!showAnnotationList)}
+                onDetachViewer={() => {
+                    const activeSeriesUid = viewports[activeViewportIndex]?.seriesUid;
+                    if (activeSeriesUid && (window as any).electron?.openViewer) {
+                        (window as any).electron.openViewer(activeSeriesUid);
+                    }
+                }}
             />
 
-            <div className="flex flex-1 overflow-hidden relative">
+            <div className="flex-1 flex overflow-hidden relative bg-peregrine-bg">
                 {appMode === 'DATABASE' ? (
-                    <div className="flex flex-1 flex-col overflow-hidden">
-                        <div className="flex flex-1 overflow-hidden relative">
-                            {/* Sidebar (Peregrine Style) */}
-                            <div className="w-72 bg-gradient-to-b from-[#f5f5f7] to-[#e8e8ea] border-r border-[#d1d1d6] flex flex-col z-30 select-none shadow-[inset_-1px_0_0_rgba(0,0,0,0.05)]">
-                                <div className="flex-1 overflow-y-auto py-4">
-                                    <div className="px-4">
-                                        {/* Smart Folders Section */}
-                                        <div className="mb-6">
-                                            <h3 className="px-3 mb-2 text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center justify-between">
-                                                Smart Folders
-                                            </h3>
-                                            <div className="space-y-0.5">
-                                                {smartFolders.map(folder => (
-                                                    <div
-                                                        key={folder.id}
-                                                        onClick={() => {
-                                                            applySmartFolder(folder.id);
-                                                            handleViewChange('Database');
-                                                        }}
-                                                        className={`group flex items-center gap-2.5 px-3 py-1.5 rounded-lg font-medium text-xs cursor-pointer transition-all ${activeSmartFolderId === folder.id && activeView === 'Database'
-                                                            ? 'bg-black/5 text-gray-900 border border-black/5 shadow-sm'
-                                                            : 'text-gray-500 hover:bg-black/5'
-                                                            }`}
-                                                    >
-                                                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                                                            <div className={activeSmartFolderId === folder.id && activeView === 'Database' ? 'text-peregrine-accent' : 'text-gray-400'}>
-                                                                {getIcon(folder.icon)}
-                                                            </div>
-                                                            <span className="truncate">{folder.name}</span>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-
-                                        <div className="mb-2 text-[10px] font-black text-gray-400 uppercase tracking-widest px-3">
-                                            PACS Nodes
-                                        </div>
+                    <div className="flex flex-1 overflow-hidden">
+                        {/* Sidebar (Peregrine Style) */}
+                        <div className="w-72 bg-gradient-to-b from-[#f5f5f7] to-[#e8e8ea] border-r border-[#d1d1d6] flex flex-col select-none shadow-[inset_-1px_0_0_rgba(0,0,0,0.05)]">
+                            <div className="flex-1 overflow-y-auto py-4">
+                                <div className="px-4">
+                                    <div className="mb-6">
+                                        <h3 className="px-3 mb-2 text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center justify-between">
+                                            Smart Folders
+                                        </h3>
                                         <div className="space-y-0.5">
-                                            {servers.map(server => (
+                                            {smartFolders.map(folder => (
                                                 <div
-                                                    key={server.id}
+                                                    key={folder.id}
                                                     onClick={() => {
-                                                        setActiveServer(server);
-                                                        handleViewChange('PACS');
+                                                        applySmartFolder(folder.id);
+                                                        handleViewChange('Database');
                                                     }}
-                                                    className={`group flex items-center gap-2.5 px-3 py-1.5 rounded-lg font-medium text-xs cursor-pointer transition-all ${activeView === 'PACS' && activeServer?.id === server.id
+                                                    className={`group flex items-center gap-2.5 px-3 py-1.5 rounded-lg font-medium text-xs cursor-pointer transition-all ${activeSmartFolderId === folder.id && activeView === 'Database'
                                                         ? 'bg-black/5 text-gray-900 border border-black/5 shadow-sm'
                                                         : 'text-gray-500 hover:bg-black/5'
                                                         }`}
                                                 >
                                                     <div className="flex items-center gap-2 flex-1 min-w-0">
-                                                        <Activity size={14} className={activeView === 'PACS' && activeServer?.id === server.id ? 'text-peregrine-accent' : 'text-gray-400'} />
-                                                        <span className="truncate">{server.name}</span>
+                                                        <div className={activeSmartFolderId === folder.id && activeView === 'Database' ? 'text-peregrine-accent' : 'text-gray-400'}>
+                                                            {getIcon(folder.icon)}
+                                                        </div>
+                                                        <span className="truncate">{folder.name}</span>
                                                     </div>
-                                                    {server.status === 'online' && (
-                                                        <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.5)]" />
-                                                    )}
                                                 </div>
                                             ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="mb-2 text-[10px] font-black text-gray-400 uppercase tracking-widest px-3">
+                                        PACS Nodes
+                                    </div>
+                                    <div className="space-y-0.5">
+                                        {servers.map(server => (
                                             <div
-                                                onClick={() => handleViewChange('Database')}
-                                                className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg font-medium text-[10px] italic mt-2 cursor-pointer transition-colors ${activeView === 'PACS' ? 'text-gray-900' : 'text-gray-400 hover:bg-black/5'}`}
+                                                key={server.id}
+                                                onClick={() => {
+                                                    setActiveServer(server);
+                                                    handleViewChange('PACS');
+                                                }}
+                                                className={`group flex items-center gap-2.5 px-3 py-1.5 rounded-lg font-medium text-xs cursor-pointer transition-all ${activeView === 'PACS' && activeServer?.id === server.id
+                                                    ? 'bg-black/5 text-gray-900 border border-black/5 shadow-sm'
+                                                    : 'text-gray-500 hover:bg-black/5'
+                                                    }`}
                                             >
-                                                <Activity size={12} className="opacity-50" />
-                                                Query All Nodes...
+                                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                                    <Activity size={14} className={activeView === 'PACS' && activeServer?.id === server.id ? 'text-peregrine-accent' : 'text-gray-400'} />
+                                                    <span className="truncate">{server.name}</span>
+                                                </div>
+                                                {server.status === 'online' && (
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.5)]" />
+                                                )}
                                             </div>
+                                        ))}
+                                        <div
+                                            onClick={() => handleViewChange('Database')}
+                                            className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg font-medium text-[10px] italic mt-2 cursor-pointer transition-colors ${activeView === 'PACS' ? 'text-gray-900' : 'text-gray-400 hover:bg-black/5'}`}
+                                        >
+                                            <Activity size={12} className="opacity-50" />
+                                            Query All Nodes...
                                         </div>
                                     </div>
                                 </div>
                             </div>
+                        </div>
 
-                            {/* Database Main Content Area */}
-                            <div className="flex-1 flex flex-col bg-[#fcfcfc] overflow-hidden">
-                                {activeView === 'PACS' ? (
-                                    <PACSMain />
-                                ) : (
-                                    <div className="flex-1 flex flex-col overflow-hidden">
-                                        {/* Central Database Table */}
-                                        <div className="flex-[5] flex flex-col overflow-hidden pt-4">
-                                            <DatabaseTable
-                                                onPatientSelect={setSelectedPatientId}
-                                                onStudySelect={setSelectedStudyUid}
-                                                onSeriesSelect={onSeriesSelect}
-                                                selectedPatientId={selectedPatientId}
-                                                selectedStudyUid={selectedStudyUid}
-                                                selectedSeriesUid={viewports[0].seriesUid}
-                                                saveSmartFolder={saveSmartFolder}
-                                            />
+                        {/* Database Main Content Area */}
+                        <div className="flex-1 flex flex-col bg-[#fcfcfc] overflow-hidden relative z-0">
+                            {activeView === 'PACS' ? (
+                                <PACSMain />
+                            ) : (
+                                <div className="flex-1 flex flex-col overflow-hidden">
+                                    <div className="flex-[5] flex flex-col overflow-hidden pt-4">
+                                        <DatabaseTable
+                                            onPatientSelect={(id) => { console.log('[App] onPatientSelect:', id); setSelectedPatientId(id); }}
+                                            onStudySelect={(uid) => { console.log('[App] onStudySelect:', uid); setSelectedStudyUid(uid); }}
+                                            onSeriesSelect={handleSeriesSelect}
+                                            selectedPatientId={selectedPatientId}
+                                            selectedStudyUid={selectedStudyUid}
+                                            selectedSeriesUid={viewports[0].seriesUid}
+                                            saveSmartFolder={saveSmartFolder}
+                                        />
+                                    </div>
+                                    <div className="flex-[3] flex gap-4 px-4 pb-4 overflow-hidden border-t border-[#e0e0e0] pt-4 bg-[#f2f2f7]">
+                                        <div className="flex-[2] flex flex-col">
+                                            <ImagePreview seriesUid={viewports[0].seriesUid} />
                                         </div>
-
-                                        {/* Bottom Split Area (Preview | Thumbnails) */}
-                                        <div className="flex-[3] flex gap-4 px-4 pb-4 overflow-hidden border-t border-[#e0e0e0] pt-4 bg-[#f2f2f7]">
-                                            <div className="flex-[2] flex flex-col">
-                                                <ImagePreview seriesUid={viewports[0].seriesUid} />
-                                            </div>
-
-                                            <div className="flex-[3] flex flex-col bg-white rounded-lg border border-[#d1d1d6] overflow-hidden shadow-sm">
-                                                <div className="flex-1 overflow-hidden">
-                                                    {selectedPatientId ? (
-                                                        <ThumbnailStrip
-                                                            patientId={selectedPatientId}
-                                                            studyUid={selectedStudyUid}
-                                                            selectedSeriesUid={viewports[0].seriesUid}
-                                                            onSelect={onSeriesSelect}
-                                                            defaultCols={6}
-                                                        />
-                                                    ) : (
-                                                        <div className="h-full flex items-center justify-center text-gray-300 uppercase text-[9px] font-black tracking-[0.2em]">No Selection</div>
-                                                    )}
-                                                </div>
+                                        <div className="flex-[3] flex flex-col bg-white rounded-lg border border-[#d1d1d6] overflow-hidden shadow-sm">
+                                            <div className="flex-1 overflow-hidden">
+                                                {selectedPatientId ? (
+                                                    <ThumbnailStrip
+                                                        patientId={selectedPatientId}
+                                                        studyUid={selectedStudyUid}
+                                                        selectedSeriesUid={viewports[0].seriesUid}
+                                                        onSelect={handleSeriesSelect}
+                                                        defaultCols={6}
+                                                    />
+                                                ) : (
+                                                    <div className="h-full flex items-center justify-center text-gray-300 uppercase text-[9px] font-black tracking-[0.2em]">No Selection</div>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Status Bar (Peregrine Style) */}
-                        <div className="h-6 bg-[#f0f0f0] border-t border-[#d1d1d6] flex items-center px-4 justify-between select-none">
-                            <div className="flex items-center gap-4 text-[10px] font-bold text-gray-500">
-                                <span className="flex items-center gap-1.5">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.5)]" />
-                                    Online
-                                </span>
-                                <div className="h-3 w-[1px] bg-gray-300" />
-                                <span>{patients.length} {settingsViewMode === 'patient' ? 'Patients' : 'Studies'} in database</span>
-                                <span>|</span>
-                                <span>DICOM Monitor: Active</span>
-                            </div>
-                            <div className="flex items-center gap-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                                <span>Documents DB - v2.0</span>
-                            </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 ) : (
-                    /* Viewer Mode Content */
-                    <div className="flex-1 flex overflow-hidden">
-                        {/* Left Thumbnails Sidebar (Peregrine Style) */}
-                        <div className="w-60 bg-[#0a0a0b] border-r border-white/10 flex flex-col overflow-hidden">
+                    <div className="flex-1 flex h-full min-h-0 overflow-hidden">
+                        {/* Sidebar (VIEWER) - Matching w-72 */}
+                        <div className="w-72 bg-[#0a0a0b] border-r border-white/10 flex flex-col overflow-hidden z-30">
                             {selectedPatientId && (
                                 <ThumbnailStrip
                                     patientId={selectedPatientId}
                                     studyUid={selectedStudyUid}
                                     selectedSeriesUid={viewports[activeViewportIndex].seriesUid}
-                                    onSelect={onSeriesSelect}
+                                    onSelect={handleSeriesSelect}
                                     fixedCols={1}
                                 />
                             )}
                         </div>
 
                         {/* Main Viewing Area */}
-                        <div className="flex-1 bg-black flex flex-col relative overflow-hidden">
+                        <div className="flex-1 bg-black flex flex-col relative h-full min-h-0 overflow-hidden">
                             {activeView === '2D' && (
                                 <div
                                     className="absolute inset-0 grid gap-[1px] bg-white/5 border-t border-white/10 p-[1px]"
@@ -735,29 +555,10 @@ const AppContent = () => {
                                             onDragOver={(e) => handleViewportDragOver(e, index)}
                                             onDrop={(e) => handleViewportDrop(e, index)}
                                         >
-                                            {/* Smart Drop Zone Indicator */}
-                                            {dropZone && dropZone.index === index && dropZone.position !== 'center' && (
-                                                <div className={`absolute z-50 bg-peregrine-accent/50 border-2 border-peregrine-accent transition-all duration-150 animate-in fade-in pointer-events-none
-                                                    ${dropZone.position === 'left' ? 'top-0 left-0 bottom-0 w-1/4' : ''}
-                                                    ${dropZone.position === 'right' ? 'top-0 right-0 bottom-0 w-1/4' : ''}
-                                                    ${dropZone.position === 'top' ? 'top-0 left-0 right-0 h-1/4' : ''}
-                                                    ${dropZone.position === 'bottom' ? 'bottom-0 left-0 right-0 h-1/4' : ''}
-                                                `}>
-                                                    <div className="w-full h-full flex items-center justify-center">
-                                                        <div className="w-6 h-6 rounded-full bg-white text-peregrine-accent flex items-center justify-center font-black text-xs shadow-md">
-                                                            +
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            {dropZone && dropZone.index === index && dropZone.position === 'center' && (
-                                                <div className="absolute inset-0 z-50 bg-peregrine-accent/20 border-2 border-peregrine-accent animate-pulse pointer-events-none" />
-                                            )}
-
                                             <Viewport
-                                                key={`${vp.id}-${activeView}-${vp.orientation}-${vp.projectionMode}-${vp.activeLUT}`}
+                                                key={`${vp.id}-${activeView}-${vp.projectionMode}-${vp.activeLUT}`}
                                                 viewportId={vp.id}
-                                                renderingEngineId="peregrine-engine"
+                                                renderingEngineId={`peregrine-engine-${vp.id}`}
                                                 seriesUid={vp.seriesUid}
                                                 activeTool={activeTool}
                                                 activeLUT={vp.activeLUT}
@@ -767,13 +568,12 @@ const AppContent = () => {
                                                 fusionVOI={vp.fusionVOI}
                                                 fusionTransferFunction={vp.fusionTransferFunction}
                                                 projectionMode={vp.projectionMode}
-                                                isSynced={isSynced && vp.orientation === 'Default'} // Disable sync if re-oriented (MPR display unlinked)
+                                                isSynced={isSynced && vp.orientation === 'Default'}
                                                 isCinePlaying={isCinePlaying}
                                                 isActive={activeViewportIndex === index}
                                                 orientation={vp.orientation}
                                                 voiOverride={vp.voi}
                                                 onVoiChange={() => {
-                                                    // Clear override once the user manually adjusts
                                                     if (vp.voi) {
                                                         setViewports(prev => {
                                                             const next = [...prev];
@@ -811,33 +611,57 @@ const AppContent = () => {
                                 </div>
                             )}
                         </div>
-
-                        {/* Right Annotation Side Panel */}
-                        {showAnnotationList && (
-                            <div className="w-80 flex-shrink-0">
-                                <AnnotationList />
-                            </div>
-                        )}
                     </div>
-                )
-                }
-            </div >
+                )}
+            </div>
+
+            {/* Status Bar (Peregrine Style) */}
+            <div className="h-6 bg-[#f0f0f0] border-t border-[#d1d1d6] flex items-center px-4 justify-between select-none z-50">
+                <div className="flex items-center gap-4 text-[10px] font-bold text-gray-500">
+                    <span className="flex items-center gap-1.5">
+                        <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.5)]" />
+                        Online
+                    </span>
+                    <div className="h-3 w-[1px] bg-gray-300" />
+                    <span>{patients.length} patients in database</span>
+                    {appMode === 'VIEWER' && (
+                        <>
+                            <span>|</span>
+                            <span>{activeView === '2D' ? 'Standard View' : activeView} Mode</span>
+                        </>
+                    )}
+                </div>
+                <div className="flex items-center gap-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                    <span>Documents DB - v2.0</span>
+                </div>
+            </div>
+
+            {showAnnotationList && appMode === 'VIEWER' && (
+                <div className="fixed top-[110px] right-0 bottom-6 w-80 border-l border-white/10 bg-[#0a0a0b] z-40">
+                    <AnnotationList />
+                </div>
+            )}
+
             <SettingsDialog />
             <SendToPACSModal />
             <ActivityManager
                 isOpen={showActivityManager}
                 onClose={() => setShowActivityManager(false)}
             />
-        </div >
+        </div>
     );
 };
 
 function App() {
+    const params = new URLSearchParams(window.location.search);
+    const initialView = params.get('view') === 'viewer' ? '2D' : 'Database';
+    const initialSeriesUid = params.get('seriesUid');
+
     return (
         <SettingsProvider>
             <DatabaseProvider>
                 <PACSProvider>
-                    <ViewerProvider>
+                    <ViewerProvider initialView={initialView as any} initialSeriesUid={initialSeriesUid}>
                         <CornerstoneManager />
                         <AppContent />
                     </ViewerProvider>

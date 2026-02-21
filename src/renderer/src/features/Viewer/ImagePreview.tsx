@@ -1,5 +1,4 @@
 import { Eye } from 'lucide-react';
-import { useDatabase } from '../Database/DatabaseProvider';
 import { Viewport } from './Viewport';
 import { useEffect, useState } from 'react';
 
@@ -8,41 +7,53 @@ interface ImagePreviewProps {
 }
 
 export const ImagePreview: React.FC<ImagePreviewProps> = ({ seriesUid }) => {
-    const { db } = useDatabase();
     const [meta, setMeta] = useState<any>(null);
 
     useEffect(() => {
-        if (!db || !seriesUid) {
+        if (!seriesUid) {
             setMeta(null);
             return;
         }
 
         const fetchMeta = async () => {
-            // Find series
-            const series = await db.series.findOne(seriesUid).exec();
-            if (!series) return;
+            try {
+                // Find series
+                const series = await (window as any).electron.db.get('SELECT * FROM series WHERE seriesInstanceUID = ?', [seriesUid]);
+                if (!series) return;
 
-            // Find study
-            const study = await db.studies.findOne(series.studyInstanceUID).exec();
-            if (!study) return;
+                // Find study
+                const studyResult = await (window as any).electron.db.get(
+                    'SELECT st.* FROM studies st JOIN series s ON s.studyId = st.id WHERE s.seriesInstanceUID = ?',
+                    [seriesUid]
+                );
+                if (!studyResult) return;
 
-            // Find patient
-            const patient = await db.patients.findOne(study.patientId).exec();
+                // Find patient
+                const patient = await (window as any).electron.db.get('SELECT * FROM patients WHERE id = ?', [studyResult.patientId]);
 
-            setMeta({
-                patientName: patient?.patientName || 'Anonymous',
-                patientID: patient?.patientID || 'Unknown',
-                studyDate: study.studyDate,
-                studyTime: study.studyTime,
-                modality: series.modality,
-                seriesDescription: series.seriesDescription,
-                seriesNumber: series.seriesNumber,
-                numImages: await db.images.count({ selector: { seriesInstanceUID: seriesUid } }).exec()
-            });
+                // Count images
+                const countResult = await (window as any).electron.db.get(
+                    'SELECT COUNT(i.id) as count FROM instances i JOIN series s ON i.seriesId = s.id WHERE s.seriesInstanceUID = ?',
+                    [seriesUid]
+                );
+
+                setMeta({
+                    patientName: patient?.patientName || 'Anonymous',
+                    patientID: patient?.patientID || 'Unknown',
+                    studyDate: studyResult.studyDate,
+                    studyTime: studyResult.studyTime,
+                    modality: series.modality,
+                    seriesDescription: series.seriesDescription,
+                    seriesNumber: series.seriesNumber,
+                    numImages: countResult?.count || 0
+                });
+            } catch (err) {
+                console.error('[ImagePreview] Error fetching metadata:', err);
+            }
         };
 
         fetchMeta();
-    }, [db, seriesUid]);
+    }, [seriesUid]);
 
     return (
         <div className="flex-1 bg-black rounded-lg border border-white/5 overflow-hidden flex flex-col relative group shadow-2xl">

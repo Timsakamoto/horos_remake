@@ -51,7 +51,7 @@ export const OrthoView = ({
         orientation: 'Axial',
         voiOverride,
         onVoiChange,
-        activeCLUT: undefined // Internal state handles this
+        activeLUT: undefined // Internal state handles this
     });
 
     const sagittal = useViewportLoader({
@@ -62,7 +62,7 @@ export const OrthoView = ({
         orientation: 'Sagittal',
         voiOverride,
         onVoiChange,
-        activeCLUT: undefined
+        activeLUT: undefined
     });
 
     const coronal = useViewportLoader({
@@ -73,7 +73,7 @@ export const OrthoView = ({
         orientation: 'Coronal',
         voiOverride,
         onVoiChange,
-        activeCLUT: undefined
+        activeLUT: undefined
     });
 
     // Register with toolgroup
@@ -116,7 +116,7 @@ export const OrthoView = ({
                 vp.setSlabThickness(slabThickness);
             }
         });
-        re.render();
+        // Rendering is handled by viewports themselves
     }, [projectionMode, slabThickness, axial.isReady, sagittal.isReady, coronal.isReady]);
 
     const handleSliderChange = (vpId: string, val: number) => {

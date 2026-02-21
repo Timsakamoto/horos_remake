@@ -1,9 +1,6 @@
 import { useState, useEffect, ReactNode, useRef } from 'react';
 import { PACSClient } from './pacsClient';
-import { useDatabase } from '../Database/DatabaseProvider';
 import { useSettings } from '../Settings/SettingsContext';
-import { importMetadata } from '../Database/importService';
-import { parseDicombuffer } from '../../utils/dicomParser';
 import {
     LocalListenerSettings,
     PACSJob,
@@ -35,7 +32,6 @@ const STORAGE_KEY_SERVERS = 'peregrine_pacs_servers';
 const STORAGE_KEY_LISTENER = 'peregrine_local_listener';
 
 export const PACSProvider = ({ children }: { children: ReactNode }) => {
-    const { db } = useDatabase();
     const { databasePath, isLoaded: settingsLoaded } = useSettings();
 
     // initialize from local storage or default
@@ -87,29 +83,10 @@ export const PACSProvider = ({ children }: { children: ReactNode }) => {
             });
         });
 
-        // Progressive Indexing: Listen for storage progress
-        const removeStorageListener = window.electron.pacs.onStorageProgress(async (data: any) => {
-            if (!db) return;
-            try {
-                // Read the file that was just written
-                const buffer = await window.electron.readFile(data.filePath);
-                if (buffer) {
-                    const meta = parseDicombuffer(buffer);
-                    if (meta) {
-                        // Import metadata record by record (Progressive)
-                        await importMetadata(db, meta, data.filePath, buffer.byteLength, databasePath);
-                    }
-                }
-            } catch (err) {
-                console.error('PACSProvider: Progressive indexing error:', err);
-            }
-        });
-
         return () => {
             removeJobListener();
-            removeStorageListener();
         };
-    }, [db]);
+    }, []);
 
     const isStartingRef = useRef(false);
 
