@@ -141,7 +141,7 @@ const AppContent = () => {
         // Arrow Keys for Active Viewport
         if (appMode === 'VIEWER') {
             let viewportId = viewports[activeViewportIndex]?.id;
-            const engine = viewportId ? (window as any).cornerstone?.getRenderingEngine(`peregrine-engine-${viewportId}`) : null;
+            const engine = (window as any).cornerstone?.getRenderingEngine('peregrine-engine');
             if (!engine) return;
 
             // In MPR mode, there isn't a single "active" index in the same grid sense,
@@ -558,7 +558,7 @@ const AppContent = () => {
                                             <Viewport
                                                 key={`${vp.id}-${activeView}-${vp.projectionMode}-${vp.activeLUT}`}
                                                 viewportId={vp.id}
-                                                renderingEngineId={`peregrine-engine-${vp.id}`}
+                                                renderingEngineId="peregrine-engine"
                                                 seriesUid={vp.seriesUid}
                                                 activeTool={activeTool}
                                                 activeLUT={vp.activeLUT}

@@ -237,7 +237,6 @@ export const useViewportLoader = ({
             renderingEngine.resize();
             // CRITICAL: Re-render ALL viewports after global resize to prevent blanking
             renderingEngine.render();
-            setIsReady(true);
 
             // OPTIMIZATION: Prefetch metadata in parallel for 2D, but AWAIT for 3D/Volume
             const prefetchPromise = prefetchMetadata(ids);
@@ -266,6 +265,17 @@ export const useViewportLoader = ({
                 }
             }
 
+            // ROBUSTNESS: For Volume view, ensure at least one slice metadata is valid to prevent NaN in shaders
+            if (isVolumeView && ids.length > 0) {
+                const testMeta = metaData.get('imagePlaneModule', ids[0]);
+                if (!testMeta || !testMeta.imageOrientationPatient || !testMeta.imagePositionPatient) {
+                    console.warn(`[useViewportLoader] ${viewportId}: Volume metadata incomplete, waiting 100ms...`);
+                    setTimeout(loadSeries, 100);
+                    return;
+                }
+            }
+
+            setIsReady(true);
             let initialIndex = 0;
             if (initialImageId) {
                 const normalizedTarget = initialImageId.replace(/\\/g, '/');
